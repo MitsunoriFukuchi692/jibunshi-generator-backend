@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:22-bullseye-slim
 
 # Build tools のインストール（Debian用）
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
