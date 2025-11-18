@@ -57,7 +57,7 @@ router.get('/users/:id/progress', (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
