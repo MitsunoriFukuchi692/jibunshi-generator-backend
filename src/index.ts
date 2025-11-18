@@ -9,7 +9,7 @@ import userRoutes from './routes/users.js';
 import photoRoutes from './routes/photos.js';
 import responseRoutes from './routes/responses.js';
 import aiRoutes from './routes/ai.js';
-import pdfRoutes from './routes/pdf.js';
+//import pdfRoutes from './routes/pdf.js';
 import publisherRoutes from './routes/publisher.js';
 
 dotenv.config();
@@ -42,7 +42,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/photos', photoRoutes);
 app.use('/api/responses', responseRoutes);
 app.use('/api/ai', aiRoutes);
-app.use('/api/pdf', pdfRoutes);
+//app.use('/api/pdf', pdfRoutes);
 app.use('/api/publisher', publisherRoutes);
 
 // ============================================
