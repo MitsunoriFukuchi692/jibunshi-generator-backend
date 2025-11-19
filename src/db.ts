@@ -123,5 +123,4 @@ const createTables = () => {
 };
 
 createTables();
-db.close();
-console.log('🔒 Database closed');
+console.log('✅ Database initialized');

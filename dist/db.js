@@ -111,6 +111,5 @@ const createTables = () => {
     console.log('✅ All tables created successfully!');
 };
 createTables();
-db.close();
-console.log('🔒 Database closed');
+console.log('✅ Database initialized');
 //# sourceMappingURL=db.js.map
