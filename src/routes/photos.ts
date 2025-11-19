@@ -85,7 +85,7 @@ router.get('/:id', (req: Request, res: Response) => {
 // ============================================
 // POST /api/photos - 写真アップロード
 // ============================================
-router.post('/', upload.single('photo'), (req: Request, res: Response) => {
+router.post('/', upload.single('file'), (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
