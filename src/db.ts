@@ -14,18 +14,23 @@ const createTables = () => {
   // users テーブル
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      age INTEGER,
-      email TEXT UNIQUE,
-      phone TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      status TEXT DEFAULT 'active',
-      progress_stage TEXT DEFAULT 'birth',
-      estimated_completion_date DATE
-    );
-  `);
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    age INTEGER,
+    birth_date DATE,
+    gender TEXT,
+    address TEXT,
+    occupation TEXT,
+    bio TEXT,
+    email TEXT UNIQUE,
+    phone TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'active',
+    progress_stage TEXT DEFAULT 'birth',
+    estimated_completion_date DATE
+  );
+`);
 
   // photos テーブル
   db.exec(`
