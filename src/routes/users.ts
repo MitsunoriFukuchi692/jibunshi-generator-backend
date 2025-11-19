@@ -46,25 +46,28 @@ router.get('/:id', (req: Request, res: Response) => {
 // ============================================
 router.post('/', (req: Request, res: Response) => {
   try {
-    const { name, age, email, phone } = req.body;
+    const { name, age, birth_date, gender, address, occupation, bio } = req.body;
     
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
     
     const stmt = db.prepare(
-      `INSERT INTO users (name, age, email, phone, status, progress_stage)
-       VALUES (?, ?, ?, ?, 'active', 'birth')`
+      `INSERT INTO users (name, age, birth_date, gender, address, occupation, bio, status, progress_stage)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
     );
     
-    const result = stmt.run(name, age || null, email || null, phone || null);
+    const result = stmt.run(name, age || null, birth_date || null, gender || null, address || null, occupation || null, bio || null);
     
     res.status(201).json({
       id: result.lastInsertRowid,
       name,
       age,
-      email,
-      phone,
+      birth_date,
+      gender,
+      address,
+      occupation,
+      bio,
       status: 'active',
       progress_stage: 'birth',
       created_at: new Date().toISOString(),
@@ -73,7 +76,6 @@ router.post('/', (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 // ============================================
 // PUT /api/users/:id - ユーザー情報更新
 // ============================================
