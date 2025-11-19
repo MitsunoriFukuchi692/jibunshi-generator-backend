@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '../../data/jibunshi.db');
@@ -15,6 +16,12 @@ const router = Router();
 // Multer設定
 // ============================================
 const uploadDir = path.join(__dirname, '../../uploads');
+
+// uploadsフォルダが存在しなければ作成
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
