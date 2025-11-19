@@ -7,26 +7,33 @@ console.log(`📁 Database path: ${dbPath}`);
 const db = new Database(dbPath);
 // テーブル作成
 const createTables = () => {
-    // users テーブル
+    // 既存のテーブルを削除（テスト用 - 開発環境でのみ）
+    db.exec(`DROP TABLE IF EXISTS users;`);
+    db.exec(`DROP TABLE IF EXISTS photos;`);
+    db.exec(`DROP TABLE IF EXISTS questions;`);
+    db.exec(`DROP TABLE IF EXISTS responses;`);
+    db.exec(`DROP TABLE IF EXISTS timeline;`);
+    db.exec(`DROP TABLE IF EXISTS pdf_versions;`);
+    // その後、新しいスキーマで作成
     db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    age INTEGER,
-    birth_date DATE,
-    gender TEXT,
-    address TEXT,
-    occupation TEXT,
-    bio TEXT,
-    email TEXT UNIQUE,
-    phone TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'active',
-    progress_stage TEXT DEFAULT 'birth',
-    estimated_completion_date DATE
-  );
-`);
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      age INTEGER,
+      birth_date DATE,
+      gender TEXT,
+      address TEXT,
+      occupation TEXT,
+      bio TEXT,
+      email TEXT UNIQUE,
+      phone TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'active',
+      progress_stage TEXT DEFAULT 'birth',
+      estimated_completion_date DATE
+    );
+  `);
     // photos テーブル
     db.exec(`
     CREATE TABLE IF NOT EXISTS photos (
