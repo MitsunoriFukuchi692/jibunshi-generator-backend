@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+uploads/
+data/
+.DS_Store
+curl
