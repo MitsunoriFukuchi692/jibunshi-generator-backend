@@ -11,7 +11,9 @@ import photoRoutes from './routes/photos.js';
 import responseRoutes from './routes/responses.js';
 import aiRoutes from './routes/ai.js';
 //import pdfRoutes from './routes/pdf.js';
+import timelineRoutes from './routes/timeline.js';
 import publisherRoutes from './routes/publisher.js';
+import interviewRoutes from './routes/interview.js';
 
 dotenv.config();
 
@@ -26,11 +28,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // CORS設定
-const corsOptions = {
-  origin: (process.env.CORS_ORIGIN || 'http://localhost:5173').split(','),
-  credentials: true,
-};
-app.use(cors(corsOptions));
+app.use(cors());
 
 // 静的ファイル配信
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -44,7 +42,9 @@ app.use('/api/photos', photoRoutes);
 app.use('/api/responses', responseRoutes);
 app.use('/api/ai', aiRoutes);
 //app.use('/api/pdf', pdfRoutes);
+app.use('/api/timeline', timelineRoutes);
 app.use('/api/publisher', publisherRoutes);
+app.use('/api/interview', interviewRoutes);
 
 // ============================================
 // ヘルスチェック

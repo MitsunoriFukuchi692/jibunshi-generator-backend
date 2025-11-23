@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,10 +7,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '../../data/jibunshi.db');
 const db = new Database(dbPath);
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
 const router = Router();
 
-// POST /api/interview/question - 次の質問を生成
+// 質問リスト（ハードコード）
+const questions = [
+  "どこで、いつ生まれましたか？",
+  "子どもの頃、どんな環境で育ちましたか？",
+  "学生時代で印象に残っていることはありますか？",
+  "初めての仕事について教えてください",
+  "仕事人生で最も大切な経験は何ですか？",
+  "家族との関係について聞かせてください",
+  "人生で乗り越えた大きな困難はありますか？",
+  "趣味や好きなことは何ですか？",
+  "友人との思い出で特別なものはありますか？",
+  "人生で最も幸せを感じた時期はいつですか？",
+  "これまでの人生で学んだ大切な教訓は何ですか？",
+  "今、大事にしていることは何ですか？",
+  "後世に伝えたいメッセージはありますか？",
+  "人生を振り返って、どう感じていますか？",
+  "これからの人生で挑戦したいことはありますか？",
+];
+
+// POST /api/interview/question - 次の質問を取得
 router.post('/question', async (req: Request, res: Response) => {
   try {
     const { user_id, conversation_history } = req.body;
@@ -25,74 +42,32 @@ router.post('/question', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'user_id is required' });
     }
 
-    // 会話履歴をテキスト形式に変換
-    let conversationText = '';
-    if (conversation_history && conversation_history.length > 0) {
-      conversationText = conversation_history
-        .map((msg: any) => `${msg.role === 'user' ? 'ユーザー' : 'AI'}: ${msg.content}`)
-        .join('\n');
-    }
+    // 現在の質問番号を計算
+    const currentQuestionIndex = Math.floor((conversation_history?.length || 0) / 2);
 
-    console.log('📄 conversationText:', conversationText.substring(0, 100) + (conversationText.length > 100 ? '...' : ''));
+    console.log('📌 Current question index:', currentQuestionIndex);
 
-    // Google Gemini API で次の質問を生成
-    const systemPrompt = `あなたは高齢者の自分史作成を支援するインタビュアーです。
-ユーザーの人生経験を引き出すために、適切な質問をしてください。
-
-目的：
-- ユーザーの生い立ち、環境、経験を詳しく聞く
-- 人生の重要な転機やターニングポイントを自然に引き出す
-- 感情や思いを深掘りする
-
-進め方：
-1. 最初の質問：「どこで、いつ生まれましたか？」から始める
-2. 以後：ユーザーの回答に基づいて、関連する質問を続ける
-3. 15～20問程度でインタビューを完了する
-
-ユーザーが十分に話してくれたと判断したら、JSONで以下の形式で返してください：
-{"completed": true, "summary": "インタビューの要約"}
-
-通常は、JSONで以下の形式で返してください：
-{"completed": false, "question": "次の質問内容"}`;
-
-    const userMessage = conversationText
-      ? `これまでの会話：\n${conversationText}\n\n次の質問を生成してください。`
-      : '初めての質問を生成してください。';
-
-    console.log('🔑 Google Gemini API Key exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
-    console.log('🚀 Calling Google Gemini API...');
-
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-    
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: systemPrompt + '\n\n' + userMessage }],
-        },
-      ],
-    });
-
-    const responseText = result.response.text();
-    console.log('✅ Google Gemini API response received');
-    console.log('📝 Response text:', responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''));
-
-    // JSON またはテキストをパース
-    try {
-      const parsed = JSON.parse(responseText);
-      console.log('✅ JSON parsed successfully:', parsed);
-      res.json(parsed);
-    } catch {
-      // JSON でない場合はテキストを質問として返す
-      console.log('⚠️ Response is not JSON, treating as plain text');
-      res.json({
-        completed: false,
-        question: responseText,
+    // すべての質問が終わったか確認
+    if (currentQuestionIndex >= questions.length) {
+      console.log('✅ Interview completed');
+      return res.json({
+        completed: true,
+        summary: 'インタビューを完了しました。ご協力ありがとうございました。'
       });
     }
+
+    // 次の質問を取得
+    const nextQuestion = questions[currentQuestionIndex];
+
+    console.log('❓ Next question:', nextQuestion);
+
+    res.json({
+      completed: false,
+      question: nextQuestion,
+    });
+
   } catch (error: any) {
     console.error('❌ Interview error:', error);
-    console.error('❌ Error message:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -115,7 +90,7 @@ router.post('/save', async (req: Request, res: Response) => {
       .map((msg: any) => `${msg.role === 'user' ? 'ユーザー' : 'AI'}: ${msg.content}`)
       .join('\n');
 
-    // responses テーブルに保存（インタビュー記録として）
+    // responses テーブルに保存
     const stmt = db.prepare(
       `INSERT INTO responses (user_id, stage, question_text, response_text)
        VALUES (?, ?, ?, ?)`
