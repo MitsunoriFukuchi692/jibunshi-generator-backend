@@ -57,9 +57,9 @@ app.get('/health', (req: Request, res: Response) => {
 // ============================================
 // SPA対応：Reactのビルド済みファイルを提供
 // ============================================
-app.use(express.static(path.join(__dirname, '../../frontend/dist')));
-
+app.use(express.static(path.join(__dirname, '../public')));
 // キャッチオール：全てのルートをindex.htmlに向ける
+
 app.get('*', (req: Request, res: Response) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
