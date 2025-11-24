@@ -33,6 +33,7 @@ app.use(cors());
 // 静的ファイル配信
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/pdfs', express.static(path.join(__dirname, '../pdfs')));
+app.use(express.static(path.join(__dirname, '../public')));
 
 // ============================================
 // ルート
@@ -60,7 +61,7 @@ app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
 // キャッチオール：全てのルートをindex.htmlに向ける
 app.get('*', (req: Request, res: Response) => {
-  res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // ============================================
