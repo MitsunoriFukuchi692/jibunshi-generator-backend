@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "cd ../frontend && npm run build && cd ../backend && tsc"
     "start": "node dist/index.js",
     "init-db": "tsx src/db.ts"
   },
