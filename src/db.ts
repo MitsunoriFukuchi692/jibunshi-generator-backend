@@ -32,6 +32,7 @@ const createTables = () => {
       bio TEXT,
       email TEXT UNIQUE,
       phone TEXT,
+      password TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       status TEXT DEFAULT 'active',

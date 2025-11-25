@@ -28,7 +28,16 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // CORS設定
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://robostudy.jp',
+    process.env.FRONTEND_URL || ''
+  ].filter(Boolean),
+  credentials: true,
+  optionsSuccessStatus: 200,
+}));
 
 // 静的ファイル配信
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -61,6 +70,10 @@ app.use(express.static(path.join(__dirname, '../public')));
 // キャッチオール：全てのルートをindex.htmlに向ける
 
 app.get('*', (req: Request, res: Response) => {
+  // /api で始まるリクエストは404を返す
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 

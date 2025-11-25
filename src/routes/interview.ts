@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { verifyToken, extractToken } from '../utils/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '../../data/jibunshi.db');
@@ -9,7 +10,27 @@ const db = new Database(dbPath);
 
 const router = Router();
 
-// 質問リスト（ハードコード）
+// ============================================
+// 認証ミドルウェア
+// ============================================
+const authenticate = (req: Request, res: Response, next: Function) => {
+  const authHeader = req.headers.authorization;
+  const token = extractToken(authHeader);
+
+  if (!token) {
+    return res.status(401).json({ error: '認証が必要です。トークンが見つかりません。' });
+  }
+
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: '無効または期限切れのトークンです。' });
+  }
+
+  (req as any).user = decoded;
+  next();
+};
+
+// 質問リスト
 const questions = [
   "どこで、いつ生まれましたか？",
   "子どもの頃、どんな環境で育ちましたか？",
@@ -28,18 +49,28 @@ const questions = [
   "これからの人生で挑戦したいことはありますか？",
 ];
 
-// POST /api/interview/question - 次の質問を取得
-router.post('/question', async (req: Request, res: Response) => {
+// ============================================
+// POST /api/interview/question - 次の質問を取得（認証必須）
+// ============================================
+router.post('/question', authenticate, async (req: Request, res: Response) => {
   try {
     const { user_id, conversation_history } = req.body;
+    const user = (req as any).user;
 
     console.log('📝 [Interview] Request received');
     console.log('👤 user_id:', user_id);
-    console.log('💬 conversation_history length:', conversation_history?.length || 0);
+    console.log('🔐 authenticated user_id:', user.userId);
 
+    // ユーザー ID の確認
     if (!user_id) {
       console.error('❌ user_id is missing');
       return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    // 本人確認：リクエストのuser_idと認証ユーザーが一致するか確認
+    if (user.userId !== user_id) {
+      console.error('❌ User ID mismatch');
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
     // 現在の質問番号を計算
@@ -68,21 +99,30 @@ router.post('/question', async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error('❌ Interview error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'インタビューに失敗しました。' });
   }
 });
 
-// POST /api/interview/save - 会話履歴を保存
-router.post('/save', async (req: Request, res: Response) => {
+// ============================================
+// POST /api/interview/save - 会話履歴を保存（認証必須）
+// ============================================
+router.post('/save', authenticate, async (req: Request, res: Response) => {
   try {
     const { user_id, conversation } = req.body;
+    const user = (req as any).user;
 
     console.log('💾 [Save] Request received');
     console.log('👤 user_id:', user_id);
-    console.log('📝 conversation length:', conversation?.length || 0);
+    console.log('🔐 authenticated user_id:', user.userId);
 
     if (!user_id || !conversation) {
       return res.status(400).json({ error: 'user_id and conversation are required' });
+    }
+
+    // 本人確認
+    if (user.userId !== user_id) {
+      console.error('❌ User ID mismatch');
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
     // 会話テキストに変換
@@ -102,7 +142,7 @@ router.post('/save', async (req: Request, res: Response) => {
     res.json({ message: 'インタビューが保存されました' });
   } catch (error: any) {
     console.error('❌ Save error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'インタビュー保存に失敗しました。' });
   }
 });
 

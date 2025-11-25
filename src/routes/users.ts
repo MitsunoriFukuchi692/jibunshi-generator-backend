@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { hashPassword, verifyPassword, generateToken, verifyToken, extractToken } from '../utils/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '../../data/jibunshi.db');
@@ -10,112 +11,223 @@ const db = new Database(dbPath);
 const router = Router();
 
 // ============================================
-// GET /api/users - すべてのユーザー取得
+// 認証ミドルウェア
 // ============================================
-router.get('/', (req: Request, res: Response) => {
-  try {
-    const stmt = db.prepare('SELECT * FROM users');
-    const users = stmt.all();
-    res.json(users);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+const authenticate = (req: Request, res: Response, next: Function) => {
+  const authHeader = req.headers.authorization;
+  const token = extractToken(authHeader);
+
+  if (!token) {
+    return res.status(401).json({ error: '認証が必要です。トークンが見つかりません。' });
   }
-});
+
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: '無効または期限切れのトークンです。' });
+  }
+
+  (req as any).user = decoded; // ユーザー情報をリクエストに追加
+  next();
+};
 
 // ============================================
-// GET /api/users/:id - 特定ユーザー取得
+// POST /api/users/register - ユーザー登録
 // ============================================
-router.get('/:id', (req: Request, res: Response) => {
+router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
-    const user = stmt.get(id);
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    res.json(user);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    const { name, email, password, age, birth_date, gender, address, occupation, bio } = req.body;
 
-// ============================================
-// POST /api/users - ユーザー登録
-// ============================================
-router.post('/', (req: Request, res: Response) => {
-  try {
-    const { name, age, birth_date, gender, address, occupation, bio } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
+    // バリデーション
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: '名前、メールアドレス、パスワードは必須です。' });
     }
-    
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'パスワードは6文字以上である必要があります。' });
+    }
+
+    // メールアドレスの重複チェック
+    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existingUser) {
+      return res.status(400).json({ error: 'このメールアドレスは既に登録されています。' });
+    }
+
+    // パスワードをハッシュ化
+    const hashedPassword = await hashPassword(password);
+
+    // ユーザーを登録
     const stmt = db.prepare(
-      `INSERT INTO users (name, age, birth_date, gender, address, occupation, bio, status, progress_stage)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
+      `INSERT INTO users (name, email, password, age, birth_date, gender, address, occupation, bio, status, progress_stage)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
     );
-    
-    const result = stmt.run(name, age || null, birth_date || null, gender || null, address || null, occupation || null, bio || null);
-    
+
+    const result = stmt.run(name, email, hashedPassword, age || null, birth_date || null, gender || null, address || null, occupation || null, bio || null);
+
+    // JWTトークンを生成
+    const token = generateToken(result.lastInsertRowid as number, email);
+
     res.status(201).json({
-      id: result.lastInsertRowid,
-      name,
-      age,
-      birth_date,
-      gender,
-      address,
-      occupation,
-      bio,
-      status: 'active',
-      progress_stage: 'birth',
-      created_at: new Date().toISOString(),
+      message: '登録が完了しました。',
+      token,
+      user: {
+        id: result.lastInsertRowid,
+        name,
+        email,
+        age,
+        birth_date,
+      },
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('❌ Registration error:', error);
+    res.status(500).json({ error: 'ユーザー登録に失敗しました。' });
   }
 });
+
 // ============================================
-// PUT /api/users/:id - ユーザー情報更新
+// POST /api/users/login - ログイン
 // ============================================
-router.put('/:id', (req: Request, res: Response) => {
+router.post('/login', async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    // バリデーション
+    if (!email || !password) {
+      return res.status(400).json({ error: 'メールアドレスとパスワードは必須です。' });
+    }
+
+    // ユーザーを検索
+    const user = db.prepare('SELECT id, email, password, name FROM users WHERE email = ?').get(email) as any;
+
+    if (!user) {
+      return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません。' });
+    }
+
+    // パスワードを検証
+    const isPasswordValid = await verifyPassword(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません。' });
+    }
+
+    // JWTトークンを生成
+    const token = generateToken(user.id, user.email);
+
+    res.json({
+      message: 'ログインに成功しました。',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (error: any) {
+    console.error('❌ Login error:', error);
+    res.status(500).json({ error: 'ログインに失敗しました。' });
+  }
+});
+
+// ============================================
+// GET /api/users/me - 現在のユーザー情報取得（認証必須）
+// ============================================
+router.get('/me', authenticate, (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const stmt = db.prepare('SELECT id, name, email, age, birth_date, gender, address, occupation, bio, status, progress_stage FROM users WHERE id = ?');
+    const userData = stmt.get(user.userId);
+
+    if (!userData) {
+      return res.status(404).json({ error: 'ユーザーが見つかりません。' });
+    }
+
+    res.json(userData);
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: 'ユーザー情報の取得に失敗しました。' });
+  }
+});
+
+// ============================================
+// GET /api/users/:id - 特定ユーザー取得（認証必須、本人のみ）
+// ============================================
+router.get('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, age, email, phone, progress_stage, status } = req.body;
-    
+    const user = (req as any).user;
+
+    // 本人確認
+    if (user.userId !== parseInt(id)) {
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    const stmt = db.prepare('SELECT id, name, email, age, birth_date, gender, address, occupation, bio, status, progress_stage FROM users WHERE id = ?');
+    const userData = stmt.get(id);
+
+    if (!userData) {
+      return res.status(404).json({ error: 'ユーザーが見つかりません。' });
+    }
+
+    res.json(userData);
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: 'ユーザー情報の取得に失敗しました。' });
+  }
+});
+
+// ============================================
+// PUT /api/users/:id - ユーザー情報更新（認証必須、本人のみ）
+// ============================================
+router.put('/:id', authenticate, (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const user = (req as any).user;
+    const { name, age, phone, progress_stage, status } = req.body;
+
+    // 本人確認
+    if (user.userId !== parseInt(id)) {
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
     const stmt = db.prepare(
       `UPDATE users 
        SET name = COALESCE(?, name),
            age = COALESCE(?, age),
-           email = COALESCE(?, email),
            phone = COALESCE(?, phone),
            progress_stage = COALESCE(?, progress_stage),
            status = COALESCE(?, status),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`
     );
-    
-    stmt.run(name, age, email, phone, progress_stage, status, id);
-    
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    res.json(user);
+
+    stmt.run(name, age, phone, progress_stage, status, id);
+
+    const updatedUser = db.prepare('SELECT id, name, email, age, birth_date, gender, address, occupation, bio, status, progress_stage FROM users WHERE id = ?').get(id);
+    res.json(updatedUser);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: 'ユーザー情報の更新に失敗しました。' });
   }
 });
 
 // ============================================
-// DELETE /api/users/:id - ユーザー削除
+// DELETE /api/users/:id - ユーザー削除（認証必須、本人のみ）
 // ============================================
-router.delete('/:id', (req: Request, res: Response) => {
+router.delete('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const user = (req as any).user;
+
+    // 本人確認
+    if (user.userId !== parseInt(id)) {
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
     const stmt = db.prepare('DELETE FROM users WHERE id = ?');
     stmt.run(id);
-    res.json({ message: 'User deleted successfully' });
+    res.json({ message: 'ユーザーが削除されました。' });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: 'ユーザー削除に失敗しました。' });
   }
 });
 
