@@ -14,6 +14,12 @@ import aiRoutes from './routes/ai.js';
 import timelineRoutes from './routes/timeline.js';
 import publisherRoutes from './routes/publisher.js';
 import interviewRoutes from './routes/interview.js';
+import {
+  rateLimitMiddleware,
+  sanitizeBodyMiddleware,
+  securityHeadersMiddleware,
+  loggingMiddleware,
+} from './middleware/securityMiddleware.js';
 
 dotenv.config();
 
@@ -24,8 +30,17 @@ const PORT = process.env.PORT || 5000;
 // ============================================
 // ミドルウェア
 // ============================================
+
+// ログ出力
+app.use(loggingMiddleware);
+
+// セキュリティヘッダー
+app.use(securityHeadersMiddleware);
+
+// JSON パースと入力検証
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(sanitizeBodyMiddleware);
 
 // CORS設定
 app.use(cors({
@@ -38,6 +53,9 @@ app.use(cors({
   credentials: true,
   optionsSuccessStatus: 200,
 }));
+
+// レート制限
+app.use(rateLimitMiddleware);
 
 // 静的ファイル配信
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
