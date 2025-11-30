@@ -31,15 +31,15 @@ const authenticate = (req: Request, res: Response, next: Function) => {
 };
 
 // ============================================
-// POST /api/users/register - ユーザー登録
+// POST /api/users/register - ユーザー登録（メール＋パスワードのみ）
 // ============================================
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { name, email, password, age, birth_date, gender, address, occupation, bio } = req.body;
+    const { email, password } = req.body;
 
     // バリデーション
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: '名前、メールアドレス、パスワードは必須です。' });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'メールアドレスとパスワードは必須です。' });
     }
 
     if (password.length < 6) {
@@ -55,13 +55,13 @@ router.post('/register', async (req: Request, res: Response) => {
     // パスワードをハッシュ化
     const hashedPassword = await hashPassword(password);
 
-    // ユーザーを登録
+    // ユーザーを登録（名前などはNULLで初期化）
     const stmt = db.prepare(
       `INSERT INTO users (name, email, password, age, birth_date, gender, address, occupation, bio, status, progress_stage)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
     );
 
-    const result = stmt.run(name, email, hashedPassword, age || null, birth_date || null, gender || null, address || null, occupation || null, bio || null);
+    const result = stmt.run('ユーザー', email, hashedPassword, null, null, null, null, null, null);
 
     // JWTトークンを生成
     const token = generateToken(result.lastInsertRowid as number, email);
@@ -69,14 +69,13 @@ router.post('/register', async (req: Request, res: Response) => {
     res.status(201).json({
       message: '登録が完了しました。',
       token,
+      userId: result.lastInsertRowid,
       user: {
         id: result.lastInsertRowid,
-        name,
         email,
-        age,
-        birth_date,
       },
     });
+
   } catch (error: any) {
     console.error('❌ Registration error:', error);
     res.status(500).json({ error: 'ユーザー登録に失敗しました。' });
@@ -84,7 +83,7 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 // ============================================
-// POST /api/users/login - ログイン
+// POST /api/users/login - ログイン/新規登録（存在しなければ自動登録）
 // ============================================
 router.post('/login', async (req: Request, res: Response) => {
   try {
@@ -95,18 +94,40 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'メールアドレスとパスワードは必須です。' });
     }
 
-    // ユーザーを検索
-    const user = db.prepare('SELECT id, email, password, name FROM users WHERE email = ?').get(email) as any;
-
-    if (!user) {
-      return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません。' });
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'パスワードは6文字以上である必要があります。' });
     }
 
-    // パスワードを検証
-    const isPasswordValid = await verifyPassword(password, user.password);
+    // ユーザーを検索
+    let user = db.prepare('SELECT id, email, password, name FROM users WHERE email = ?').get(email) as any;
 
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません。' });
+    // ユーザーが存在しない場合は自動登録
+    if (!user) {
+      try {
+        const hashedPassword = await hashPassword(password);
+        const stmt = db.prepare(
+          `INSERT INTO users (name, email, password, age, birth_date, gender, address, occupation, bio, status, progress_stage)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
+        );
+        
+        const result = stmt.run('ユーザー', email, hashedPassword, null, null, null, null, null, null);
+        user = {
+          id: result.lastInsertRowid,
+          email,
+          password: hashedPassword,
+          name: 'ユーザー'
+        };
+      } catch (registerError: any) {
+        console.error('❌ Auto-registration error:', registerError);
+        return res.status(500).json({ error: '登録に失敗しました。' });
+      }
+    } else {
+      // ユーザーが存在する場合、パスワードを検証
+      const isPasswordValid = await verifyPassword(password, user.password);
+
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません。' });
+      }
     }
 
     // JWTトークンを生成
@@ -115,12 +136,14 @@ router.post('/login', async (req: Request, res: Response) => {
     res.json({
       message: 'ログインに成功しました。',
       token,
+      userId: user.id,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
       },
     });
+    
   } catch (error: any) {
     console.error('❌ Login error:', error);
     res.status(500).json({ error: 'ログインに失敗しました。' });
