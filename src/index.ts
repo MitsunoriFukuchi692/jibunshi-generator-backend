@@ -5,6 +5,24 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// .env ファイルのパスを明示的に指定
+const envPath = path.resolve(__dirname, '../.env');
+console.log('🔍 Loading .env from:', envPath);
+const dotenvResult = dotenv.config({ path: envPath });
+if (dotenvResult.error) {
+  console.error('⚠️ dotenv error:', dotenvResult.error.message);
+} else {
+  console.log('✅ .env loaded successfully');
+}
+
+// デバッグ: 環境変数の確認
+console.log('🔍 ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? `✅ Set (${process.env.ANTHROPIC_API_KEY.substring(0, 20)}...)` : '❌ Not set');
+console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
+console.log('🔍 PORT:', process.env.PORT);
+
 // ルートのインポート
 import userRoutes from './routes/users.js';
 import photoRoutes from './routes/photos.js';
@@ -21,9 +39,6 @@ import {
   loggingMiddleware,
 } from './middleware/securityMiddleware.js';
 
-dotenv.config();
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -46,6 +61,7 @@ app.use(sanitizeBodyMiddleware);
 app.use(cors({
   origin: [
     'http://localhost:5173',
+    'http://localhost:5174', 
     'http://localhost:3000',
     'https://robostudy.jp',
     process.env.FRONTEND_URL || ''
@@ -85,7 +101,6 @@ app.get('/health', (req: Request, res: Response) => {
 // SPA対応：Reactのビルド済みファイルを提供
 // ============================================
 app.use(express.static(path.join(__dirname, '../public')));
-// キャッチオール：全てのルートをindex.htmlに向ける
 
 app.get('*', (req: Request, res: Response) => {
   // /api で始まるリクエストは404を返す
