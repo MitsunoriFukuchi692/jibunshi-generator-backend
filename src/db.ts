@@ -12,18 +12,18 @@ const db = new Database(dbPath);
 // テーブル作成
 const createTables = () => {
   // 既存のテーブルを削除（テスト用 - 開発環境でのみ）
-  db.exec(`DROP TABLE IF EXISTS users;`);
-  db.exec(`DROP TABLE IF EXISTS photos;`);
-  db.exec(`DROP TABLE IF EXISTS questions;`);
-  db.exec(`DROP TABLE IF EXISTS responses;`);
-  db.exec(`DROP TABLE IF EXISTS timeline;`);
-  db.exec(`DROP TABLE IF EXISTS pdf_versions;`);
+  //db.exec(`DROP TABLE IF EXISTS users;`);
+  //db.exec(`DROP TABLE IF EXISTS photos;`);
+  //db.exec(`DROP TABLE IF EXISTS questions;`);
+  //db.exec(`DROP TABLE IF EXISTS responses;`);
+  //db.exec(`DROP TABLE IF EXISTS timeline;`);
+  //db.exec(`DROP TABLE IF EXISTS pdf_versions;`);
 
   // その後、新しいスキーマで作成
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
+      name TEXT,
       age INTEGER,
       birth_date DATE,
       gender TEXT,
