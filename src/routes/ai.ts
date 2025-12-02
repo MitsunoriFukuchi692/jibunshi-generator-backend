@@ -159,6 +159,10 @@ router.post('/edit-text', async (req: Request, res: Response) => {
     const authHeader = req.headers.authorization;
     const token = extractToken(authHeader);
 
+    console.log('📝 edit-text リクエスト受信');
+    console.log('👤 user_id:', user_id);
+    console.log('🎭 stage:', stage);
+
     // 認証チェック
     if (!token) {
       return res.status(401).json({ error: '認証が必要です' });
@@ -172,6 +176,13 @@ router.post('/edit-text', async (req: Request, res: Response) => {
     // 本人確認
     if (decoded.userId !== user_id) {
       return res.status(403).json({ error: 'アクセス権限がありません' });
+    }
+
+    // user_idが実際に存在するか確認
+    const userCheck = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
+    if (!userCheck) {
+      console.error('❌ ユーザーが見つかりません:', user_id);
+      return res.status(400).json({ error: 'ユーザーが見つかりません' });
     }
 
     if (!responses || !Array.isArray(responses) || responses.length === 0) {
@@ -232,6 +243,7 @@ ${responsesText}
     );
 
     console.log('💾 timeline テーブルに保存完了');
+    console.log('📊 保存された ID:', result.lastInsertRowid);
 
     res.json({
       id: result.lastInsertRowid,
@@ -242,6 +254,8 @@ ${responsesText}
     });
   } catch (error: any) {
     console.error('❌ Text edit error:', error);
+    console.error('📋 Error message:', error.message);
+    console.error('📋 Error code:', error.code);
     res.status(500).json({ error: error.message });
   }
 });
