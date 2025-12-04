@@ -52,18 +52,19 @@ app.use(loggingMiddleware);
 // セキュリティヘッダー
 app.use(securityHeadersMiddleware);
 
-// JSON パースと入力検証
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// JSON パースと入力検証 - 本番環境用に100mbに設定
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(sanitizeBodyMiddleware);
 
 // CORS設定
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'http://localhost:5174', 
+    'http://localhost:5174',
     'http://localhost:3000',
     'https://robostudy.jp',
+    'https://robostudy.jp/jibunshi/',
     process.env.FRONTEND_URL || ''
   ].filter(Boolean),
   credentials: true,
