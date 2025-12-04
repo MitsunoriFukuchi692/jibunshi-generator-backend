@@ -81,7 +81,7 @@ router.get('/', authenticate, (req: Request, res: Response) => {
 router.post('/', authenticate, (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const { age, year, stage, event_title, event_description, edited_content } = req.body;
+    const { age, year, stage, event_title, event_description, edited_content, answersWithPhotos } = req.body;
 
     if (!event_title || !event_description) {
       return res.status(400).json({
@@ -104,10 +104,48 @@ router.post('/', authenticate, (req: Request, res: Response) => {
       edited_content || null
     );
 
-    console.log('✅ Timeline created - id:', result.lastInsertRowid);
+    const timelineId = result.lastInsertRowid;
+    console.log('✅ Timeline created - id:', timelineId);
+
+    // 写真データを保存（オプション）
+    if (answersWithPhotos && Array.isArray(answersWithPhotos)) {
+      try {
+        // テーブルが存在するか確認
+        const tableCheck = db.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='timeline_photos'`
+        ).get();
+
+        if (tableCheck) {
+          const photoStmt = db.prepare(
+            `INSERT INTO timeline_photos (timeline_id, question_index, photo_data, photo_description, created_at)
+             VALUES (?, ?, ?, ?, datetime('now'))`
+          );
+
+          for (let idx = 0; idx < answersWithPhotos.length; idx++) {
+            const answer = answersWithPhotos[idx];
+            if (answer.photos && Array.isArray(answer.photos)) {
+              for (const photo of answer.photos) {
+                photoStmt.run(
+                  timelineId,
+                  idx,
+                  photo.file_path, // Base64データまたはURL
+                  photo.description || `Photo from Q${idx + 1}`
+                );
+              }
+            }
+          }
+          console.log('✅ Photos saved for timeline id:', timelineId);
+        } else {
+          console.warn('⚠️ timeline_photos table does not exist yet');
+        }
+      } catch (photoError: any) {
+        console.warn('⚠️ Photo save warning:', photoError.message);
+        // 写真保存エラーは無視して続行
+      }
+    }
 
     res.status(201).json({
-      id: result.lastInsertRowid,
+      id: timelineId,
       user_id: user.userId,
       age,
       year,
@@ -115,6 +153,7 @@ router.post('/', authenticate, (req: Request, res: Response) => {
       event_title,
       event_description,
       edited_content: edited_content || null,
+      answersWithPhotos: answersWithPhotos || [],
       created_at: new Date().toISOString(),
     });
   } catch (error: any) {
