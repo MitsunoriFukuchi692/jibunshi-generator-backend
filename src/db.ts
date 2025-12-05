@@ -5,9 +5,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let db: Database.Database | null = null;
+let db: any = null;
 
-export function initDb() {
+export function initDb(): void {
   const dbPath = path.join(__dirname, '../data/jibunshi.db');
   db = new Database(dbPath);
 
@@ -112,17 +112,16 @@ export function initDb() {
   `);
 
   console.log('✅ Database initialized successfully');
-  return db;
 }
 
-export function getDb(): Database.Database {
+export function getDb(): any {
   if (!db) {
     throw new Error('Database not initialized. Call initDb() first.');
   }
   return db;
 }
 
-export function closeDb() {
+export function closeDb(): void {
   if (db) {
     db.close();
     db = null;
