@@ -1,12 +1,26 @@
 import './db.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// uploads と pdfs フォルダを自動作成
+const uploadsDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('✅ uploads フォルダを作成しました:', uploadsDir);
+}
+
+const pdfsDir = path.join(__dirname, '../pdfs');
+if (!fs.existsSync(pdfsDir)) {
+  fs.mkdirSync(pdfsDir, { recursive: true });
+  console.log('✅ pdfs フォルダを作成しました:', pdfsDir);
+}
 
 // .env ファイルのパスを明示的に指定
 const envPath = path.resolve(__dirname, '../.env');
