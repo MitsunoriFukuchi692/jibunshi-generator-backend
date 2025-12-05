@@ -14,6 +14,22 @@ export function initDb(): void {
   // 外部キー制約を有効化
   db.pragma('foreign_keys = ON');
 
+  // ===== 既存テーブルを削除（初期化時） =====
+  // 開発環境では毎回削除、本番環境ではコメントアウト
+  try {
+    db.exec(`
+      DROP TABLE IF EXISTS interviews;
+      DROP TABLE IF EXISTS pdf_versions;
+      DROP TABLE IF EXISTS timeline_photos;
+      DROP TABLE IF EXISTS photos;
+      DROP TABLE IF EXISTS timeline;
+      DROP TABLE IF EXISTS users;
+    `);
+    console.log('✅ Dropped existing tables');
+  } catch (error) {
+    console.log('ℹ️ No existing tables to drop');
+  }
+
   // ===== users テーブル =====
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
