@@ -1,14 +1,22 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../data/jibunshi.db');
+const dataDir = path.join(__dirname, '../data');
+
+// data フォルダを自動作成
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log(`✅ data フォルダを作成しました: ${dataDir}`);
+}
+
+const dbPath = path.join(dataDir, 'jibunshi.db');
 
 console.log(`📁 Database path: ${dbPath}`);
 
 const db = new Database(dbPath);
-
 // テーブル作成
 const createTables = () => {
   // 既存のテーブルを削除（テスト用 - 開発環境でのみ）
