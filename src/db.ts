@@ -1,135 +1,131 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fs from 'fs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, '../data');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// data フォルダを自動作成
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-  console.log(`✅ data フォルダを作成しました: ${dataDir}`);
-}
+let db: Database.Database | null = null;
 
-const dbPath = path.join(dataDir, 'jibunshi.db');
+export function initDb() {
+  const dbPath = path.join(__dirname, '../data/jibunshi.db');
+  db = new Database(dbPath);
 
-console.log(`📁 Database path: ${dbPath}`);
+  // 外部キー制約を有効化
+  db.pragma('foreign_keys = ON');
 
-const db = new Database(dbPath);
-// テーブル作成
-const createTables = () => {
-  // 既存のテーブルを削除（テスト用 - 開発環境でのみ）
-  //db.exec(`DROP TABLE IF EXISTS users;`);
-  //db.exec(`DROP TABLE IF EXISTS photos;`);
-  //db.exec(`DROP TABLE IF EXISTS questions;`);
-  //db.exec(`DROP TABLE IF EXISTS responses;`);
-  //db.exec(`DROP TABLE IF EXISTS timeline;`);
-  //db.exec(`DROP TABLE IF EXISTS pdf_versions;`);
-
-  // その後、新しいスキーマで作成
+  // ===== users テーブル =====
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
+      name TEXT NOT NULL,
       age INTEGER,
-      birth_date DATE,
-      gender TEXT,
-      address TEXT,
-      occupation TEXT,
-      bio TEXT,
       email TEXT UNIQUE,
-      phone TEXT,
-      password TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      status TEXT DEFAULT 'active',
-      progress_stage TEXT DEFAULT 'birth',
-      estimated_completion_date DATE
-    );
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
   `);
 
-  // photos テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      filename TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      stage TEXT,
-      description TEXT,
-      ai_analysis TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-  `);
-
-  // questions テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS questions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      stage TEXT NOT NULL,
-      order_num INTEGER,
-      template_text TEXT NOT NULL,
-      photo_id INTEGER,
-      user_id INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id),
-      FOREIGN KEY (photo_id) REFERENCES photos(id)
-    );
-  `);
-
-  // responses テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS responses (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      question_id INTEGER,
-      stage TEXT NOT NULL,
-      question_text TEXT NOT NULL,
-      response_text TEXT NOT NULL,
-      is_voice BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      photo_id INTEGER,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (question_id) REFERENCES questions(id),
-      FOREIGN KEY (photo_id) REFERENCES photos(id)
-    );
-  `);
-
-  // timeline テーブル
+  // ===== timeline テーブル =====
   db.exec(`
     CREATE TABLE IF NOT EXISTS timeline (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
-      age INTEGER,
       year INTEGER,
-      stage TEXT,
-      event_title TEXT,
+      month INTEGER,
+      turning_point TEXT,
       event_description TEXT,
       edited_content TEXT,
-      is_auto_generated BOOLEAN DEFAULT 1,
+      ai_corrected_text TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+    )
   `);
 
-  // pdf_versions テーブル
+  // ===== photos テーブル =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      timeline_id INTEGER,
+      file_path TEXT NOT NULL,
+      file_name TEXT,
+      description TEXT,
+      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (timeline_id) REFERENCES timeline(id) ON DELETE SET NULL
+    )
+  `);
+
+  // ===== timeline_photos テーブル（タイムラインと写真の多対多関係） =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS timeline_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timeline_id INTEGER NOT NULL,
+      file_path TEXT NOT NULL,
+      description TEXT,
+      display_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (timeline_id) REFERENCES timeline(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ===== pdf_versions テーブル（PDF生成履歴） =====
   db.exec(`
     CREATE TABLE IF NOT EXISTS pdf_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
+      file_path TEXT NOT NULL,
+      filename TEXT NOT NULL,
       version INTEGER DEFAULT 1,
-      html_content TEXT,
-      pdf_path TEXT,
-      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       status TEXT DEFAULT 'draft',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+    )
   `);
 
-  console.log('✅ All tables created successfully!');
-};
+  // ===== interviews テーブル（音声インタビュー記録） =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS interviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      question TEXT,
+      answer_text TEXT,
+      answer_audio_path TEXT,
+      duration_seconds INTEGER,
+      is_processed BOOLEAN DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 
-createTables();
-console.log('✅ Database initialized');
+  // ===== インデックス作成（クエリ高速化） =====
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_timeline_user_id ON timeline(user_id);
+    CREATE INDEX IF NOT EXISTS idx_timeline_user_year ON timeline(user_id, year);
+    CREATE INDEX IF NOT EXISTS idx_photos_user_id ON photos(user_id);
+    CREATE INDEX IF NOT EXISTS idx_photos_timeline_id ON photos(timeline_id);
+    CREATE INDEX IF NOT EXISTS idx_pdf_versions_user_id ON pdf_versions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON interviews(user_id);
+  `);
+
+  console.log('✅ Database initialized successfully');
+  return db;
+}
+
+export function getDb(): Database.Database {
+  if (!db) {
+    throw new Error('Database not initialized. Call initDb() first.');
+  }
+  return db;
+}
+
+export function closeDb() {
+  if (db) {
+    db.close();
+    db = null;
+    console.log('Database connection closed');
+  }
+}

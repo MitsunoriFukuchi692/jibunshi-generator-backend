@@ -1,144 +1,132 @@
-import './db.js';
-import fs from 'fs';
+import express, { Express, Request, Response } from 'express';
+import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
+import { initDb, getDb } from './db.js';
+
+// ルートインポート
+import pdfRoutes from './routes/pdf.js';
+import timelineRoutes from './routes/timeline.js';
+import photoRoutes from './routes/photo.js';
+import interviewRoutes from './routes/interview.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// uploads と pdfs フォルダを自動作成
-const uploadsDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('✅ uploads フォルダを作成しました:', uploadsDir);
-}
+const app: Express = express();
+const PORT = process.env.PORT || 3000;
 
-const pdfsDir = path.join(__dirname, '../pdfs');
-if (!fs.existsSync(pdfsDir)) {
-  fs.mkdirSync(pdfsDir, { recursive: true });
-  console.log('✅ pdfs フォルダを作成しました:', pdfsDir);
-}
-
-// .env ファイルのパスを明示的に指定
-const envPath = path.resolve(__dirname, '../.env');
-console.log('🔍 Loading .env from:', envPath);
-const dotenvResult = dotenv.config({ path: envPath });
-if (dotenvResult.error) {
-  console.error('⚠️ dotenv error:', dotenvResult.error.message);
-} else {
-  console.log('✅ .env loaded successfully');
-}
-
-// デバッグ: 環境変数の確認
-console.log('🔍 ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? `✅ Set (${process.env.ANTHROPIC_API_KEY.substring(0, 20)}...)` : '❌ Not set');
-console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
-console.log('🔍 PORT:', process.env.PORT);
-
-// ルートのインポート
-import userRoutes from './routes/users.js';
-import photoRoutes from './routes/photos.js';
-import responseRoutes from './routes/responses.js';
-import aiRoutes from './routes/ai.js';
-//import pdfRoutes from './routes/pdf.js';
-import timelineRoutes from './routes/timeline.js';
-import publisherRoutes from './routes/publisher.js';
-import interviewRoutes from './routes/interview.js';
-import {
-  rateLimitMiddleware,
-  sanitizeBodyMiddleware,
-  securityHeadersMiddleware,
-  loggingMiddleware,
-} from './middleware/securityMiddleware.js';
-
-const app = express();
-const PORT = process.env.PORT || 5000;
-
-// ============================================
-// ミドルウェア
-// ============================================
-
-// ログ出力
-app.use(loggingMiddleware);
-
-// セキュリティヘッダー
-app.use(securityHeadersMiddleware);
-
-// JSON パースと入力検証 - 本番環境用に100mbに設定
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
-app.use(sanitizeBodyMiddleware);
-
-// CORS設定
+// ===== ミドルウェア設定 =====
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'http://localhost:5174',
     'http://localhost:3000',
     'https://robostudy.jp',
-    'https://robostudy.jp/jibunshi/',
-    process.env.FRONTEND_URL || ''
-  ].filter(Boolean),
-  credentials: true,
-  optionsSuccessStatus: 200,
+    'https://jibunshi-generator-frontend.vercel.app'
+  ],
+  credentials: true
 }));
 
-// レート制限
-app.use(rateLimitMiddleware);
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// 静的ファイル配信
+// ===== 静的ファイル設定 =====
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/pdfs', express.static(path.join(__dirname, '../pdfs')));
-app.use(express.static(path.join(__dirname, '../public')));
 
-// ============================================
-// ルート
-// ============================================
-app.use('/api/users', userRoutes);
-app.use('/api/photos', photoRoutes);
-app.use('/api/responses', responseRoutes);
-app.use('/api/ai', aiRoutes);
-//app.use('/api/pdf', pdfRoutes);
+// ===== データベース初期化 =====
+try {
+  initDb();
+  console.log('✅ Database initialized');
+} catch (error) {
+  console.error('❌ Database initialization failed:', error);
+  process.exit(1);
+}
+
+// ===== ヘルスチェック =====
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ===== API ルート設定 =====
+
+// PDFルート（新規追加）
+app.use('/api/pdf', pdfRoutes);
+
+// その他のルート
 app.use('/api/timeline', timelineRoutes);
-app.use('/api/publisher', publisherRoutes);
+app.use('/api/photo', photoRoutes);
 app.use('/api/interview', interviewRoutes);
 
-// ============================================
-// ヘルスチェック
-// ============================================
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// ============================================
-// SPA対応：Reactのビルド済みファイルを提供
-// ============================================
-app.use(express.static(path.join(__dirname, '../public')));
-
-app.get('*', (req: Request, res: Response) => {
-  // /api で始まるリクエストは404を返す
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({ error: 'API endpoint not found' });
-  }
-  res.sendFile(path.join(__dirname, '../public/index.html'));
-});
-
-// ============================================
-// エラーハンドリング
-// ============================================
-app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('❌ Error:', err.message);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
+// ===== ルートエンドポイント =====
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    message: '自分史生成システム バックエンド API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      pdf: {
+        generate: 'POST /api/pdf/generate',
+        download: 'GET /api/pdf/:pdfId/download'
+      },
+      timeline: {
+        create: 'POST /api/timeline',
+        get: 'GET /api/timeline/:id',
+        update: 'PUT /api/timeline/:id',
+        list: 'GET /api/timeline/user/:userId'
+      },
+      photo: {
+        upload: 'POST /api/photo/upload',
+        get: 'GET /api/photo/:id',
+        delete: 'DELETE /api/photo/:id'
+      },
+      interview: {
+        create: 'POST /api/interview',
+        list: 'GET /api/interview/user/:userId'
+      }
+    }
   });
 });
 
-// ============================================
-// サーバー起動
-// ============================================
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
+// ===== エラーハンドリング =====
+app.use((err: any, req: Request, res: Response) => {
+  console.error('❌ Error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal Server Error',
+    timestamp: new Date().toISOString()
+  });
 });
+
+// ===== 404ハンドリング =====
+app.use((req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'Not Found',
+    path: req.path
+  });
+});
+
+// ===== サーバー起動 =====
+app.listen(PORT, () => {
+  console.log(`
+╔════════════════════════════════════════╗
+║   🚀 自分史生成システム バックエンド    ║
+║   ポート: ${PORT}                          ║
+║   環境: ${process.env.NODE_ENV || 'development'}                 ║
+╚════════════════════════════════════════╝
+  `);
+  console.log(`✅ サーバーが起動しました: http://localhost:${PORT}`);
+  console.log(`📚 API ドキュメント: GET http://localhost:${PORT}/`);
+});
+
+// ===== グレースフルシャットダウン =====
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  process.exit(0);
+});
+
+export default app;
