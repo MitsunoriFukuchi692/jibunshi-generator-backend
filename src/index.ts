@@ -7,6 +7,7 @@ import { initDb, getDb } from './db.js';
 // ルートインポート
 import pdfRoutes from './routes/pdf.js';
 import timelineRoutes from './routes/timeline.js';
+import usersRoutes from './routes/users.js';
 // import photoRoutes from './routes/photo.js';
 // import interviewRoutes from './routes/interview.js';
 
@@ -50,7 +51,10 @@ app.get('/health', (req: Request, res: Response) => {
 
 // ===== API ルート設定 =====
 
-// PDFルート（新規追加）
+// ユーザー認証ルート（最初に設定）
+app.use('/api/users', usersRoutes);
+
+// PDFルート
 app.use('/api/pdf', pdfRoutes);
 
 // その他のルート
@@ -65,6 +69,10 @@ app.get('/', (req: Request, res: Response) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
+      users: {
+        login: 'POST /api/users/login',
+        register: 'POST /api/users/register'
+      },
       pdf: {
         generate: 'POST /api/pdf/generate',
         download: 'GET /api/pdf/:pdfId/download'
