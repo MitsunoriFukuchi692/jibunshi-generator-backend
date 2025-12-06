@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { initDb, getDb } from './db.js';
 
 // ルートインポート
+import aiRoutes from './routes/ai.js';
 import pdfRoutes from './routes/pdf.js';
 import timelineRoutes from './routes/timeline.js';
 import usersRoutes from './routes/users.js';
@@ -51,8 +52,11 @@ app.get('/health', (req: Request, res: Response) => {
 
 // ===== API ルート設定 =====
 
-// ユーザー認証ルート（最初に設定）
+// ユーザー認証ルート
 app.use('/api/users', usersRoutes);
+
+// AI ルート（テキスト修正）
+app.use('/api/ai', aiRoutes);
 
 // PDFルート
 app.use('/api/pdf', pdfRoutes);
@@ -72,6 +76,9 @@ app.get('/', (req: Request, res: Response) => {
       users: {
         login: 'POST /api/users/login',
         register: 'POST /api/users/register'
+      },
+      ai: {
+        editText: 'POST /api/ai/edit-text'
       },
       pdf: {
         generate: 'POST /api/pdf/generate',

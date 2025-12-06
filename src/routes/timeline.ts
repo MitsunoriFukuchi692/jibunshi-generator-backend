@@ -1,12 +1,6 @@
 import { Router, Request, Response } from 'express';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
 
 const router = Router();
 
@@ -17,15 +11,20 @@ const authenticate = (req: Request, res: Response, next: Function) => {
   const authHeader = req.headers.authorization;
   const token = extractToken(authHeader);
 
+  console.log('🔐 Authentication check - Header:', authHeader);
+
   if (!token) {
+    console.error('❌ No token found');
     return res.status(401).json({ error: '認証が必要です。トークンが見つかりません。' });
   }
 
   const decoded = verifyToken(token);
   if (!decoded) {
+    console.error('❌ Token verification failed');
     return res.status(401).json({ error: '無効または期限切れのトークンです。' });
   }
 
+  console.log('✅ Token verified - userId:', decoded.userId);
   (req as any).user = decoded;
   next();
 };
@@ -37,6 +36,7 @@ router.get('/', authenticate, (req: Request, res: Response) => {
   try {
     const { stage } = req.query;
     const user = (req as any).user;
+    const db = getDb();
 
     console.log('📖 Timeline list request - user_id:', user.userId);
 
@@ -52,23 +52,8 @@ router.get('/', authenticate, (req: Request, res: Response) => {
     const stmt = db.prepare(query);
     const timelines = stmt.all(...params) as any[];
 
-    // データを明示的に変換
-    const convertedTimelines = timelines.map(item => ({
-      id: item.id,
-      user_id: item.user_id,
-      age: item.age,
-      year: item.year,
-      stage: item.stage,
-      event_title: item.event_title,
-      event_description: item.event_description,
-      edited_content: item.edited_content,
-      is_auto_generated: item.is_auto_generated,
-      created_at: item.created_at
-    }));
-
-    console.log('✅ Timeline list:', convertedTimelines.length, 'items');
-    console.log('📊 Data sample:', JSON.stringify(convertedTimelines[0])); // デバッグ用
-    res.json(convertedTimelines);  // ← ここを convertedTimelines に変更
+    console.log('✅ Timeline list:', timelines.length, 'items');
+    res.json(timelines);
   } catch (error: any) {
     console.error('❌ Error:', error);
     res.status(500).json({ error: error.message });
@@ -81,84 +66,97 @@ router.get('/', authenticate, (req: Request, res: Response) => {
 router.post('/', authenticate, (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const { age, year, stage, event_title, event_description, edited_content, answersWithPhotos } = req.body;
+    const db = getDb();
+    const { age, year, month, turning_point, stage, event_title, event_description, edited_content, answersWithPhotos } = req.body;
 
-    if (!event_title || !event_description) {
+    console.log('💾 Timeline creation request:', {
+      userId: user.userId,
+      eventTitle: event_title,
+      hasEditedContent: !!edited_content,
+      contentLength: edited_content?.length || 0
+    });
+
+    // 必須フィールドの検証
+    if (!event_title) {
+      console.warn('⚠️ Missing event_title');
       return res.status(400).json({
-        error: 'event_title, event_description are required',
+        error: 'event_title is required',
       });
     }
 
+    if (!event_description && !edited_content) {
+      console.warn('⚠️ Missing both event_description and edited_content');
+      return res.status(400).json({
+        error: 'Either event_description or edited_content is required',
+      });
+    }
+
+    // timeline テーブルに保存
     const stmt = db.prepare(
-      `INSERT INTO timeline (user_id, age, year, stage, event_title, event_description, edited_content)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO timeline (user_id, age, year, month, turning_point, stage, event_title, event_description, edited_content, is_auto_generated)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     const result = stmt.run(
       user.userId,
       age ? parseInt(age) : null,
       year ? parseInt(year) : null,
-      stage || 'turning_points',
+      month ? parseInt(month) : null,
+      turning_point || null,
+      stage || 'interview',
       event_title,
-      event_description,
-      edited_content || null
+      event_description || null,
+      edited_content || null,
+      1  // is_auto_generated: AI生成テキスト
     );
 
     const timelineId = result.lastInsertRowid;
-    console.log('✅ Timeline created - id:', timelineId);
+    console.log('✅ Timeline created successfully - id:', timelineId);
 
     // 写真データを保存（オプション）
     if (answersWithPhotos && Array.isArray(answersWithPhotos)) {
       try {
-        // テーブルが存在するか確認
-        const tableCheck = db.prepare(
-          `SELECT name FROM sqlite_master WHERE type='table' AND name='timeline_photos'`
-        ).get();
+        const photoStmt = db.prepare(
+          `INSERT INTO timeline_photos (timeline_id, file_path, description, created_at)
+           VALUES (?, ?, ?, datetime('now'))`
+        );
 
-        if (tableCheck) {
-          const photoStmt = db.prepare(
-            `INSERT INTO timeline_photos (timeline_id, question_index, photo_data, photo_description, created_at)
-             VALUES (?, ?, ?, ?, datetime('now'))`
-          );
-
-          for (let idx = 0; idx < answersWithPhotos.length; idx++) {
-            const answer = answersWithPhotos[idx];
-            if (answer.photos && Array.isArray(answer.photos)) {
-              for (const photo of answer.photos) {
-                photoStmt.run(
-                  timelineId,
-                  idx,
-                  photo.file_path, // Base64データまたはURL
-                  photo.description || `Photo from Q${idx + 1}`
-                );
-              }
+        let photoCount = 0;
+        for (let idx = 0; idx < answersWithPhotos.length; idx++) {
+          const answer = answersWithPhotos[idx];
+          if (answer.photos && Array.isArray(answer.photos)) {
+            for (const photo of answer.photos) {
+              photoStmt.run(
+                timelineId,
+                photo.file_path,
+                photo.description || `Photo from Q${idx + 1}`
+              );
+              photoCount++;
             }
           }
-          console.log('✅ Photos saved for timeline id:', timelineId);
-        } else {
-          console.warn('⚠️ timeline_photos table does not exist yet');
         }
+        console.log('✅ Photos saved -', photoCount, 'photos for timeline id:', timelineId);
       } catch (photoError: any) {
         console.warn('⚠️ Photo save warning:', photoError.message);
         // 写真保存エラーは無視して続行
       }
     }
 
+    // 保存されたデータを取得して返す
+    const savedTimeline = db.prepare('SELECT * FROM timeline WHERE id = ?').get(timelineId);
+
     res.status(201).json({
-      id: timelineId,
-      user_id: user.userId,
-      age,
-      year,
-      stage: stage || 'turning_points',
-      event_title,
-      event_description,
-      edited_content: edited_content || null,
-      answersWithPhotos: answersWithPhotos || [],
-      created_at: new Date().toISOString(),
+      success: true,
+      message: 'Timeline created successfully',
+      data: savedTimeline
     });
+
   } catch (error: any) {
-    console.error('❌ Error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('❌ Error in POST /api/timeline:', error);
+    res.status(500).json({ 
+      error: 'Failed to create timeline',
+      details: error.message 
+    });
   }
 });
 
@@ -169,11 +167,15 @@ router.get('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
+    const db = getDb();
+
+    console.log('📖 Timeline detail request - id:', id);
 
     const stmt = db.prepare('SELECT * FROM timeline WHERE id = ? AND user_id = ?');
     const timeline = stmt.get(id, user.userId);
 
     if (!timeline) {
+      console.warn('⚠️ Timeline not found - id:', id);
       return res.status(404).json({ error: 'Timeline not found' });
     }
 
@@ -192,15 +194,20 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
-    const { age, year, stage, event_title, event_description, edited_content } = req.body;
+    const db = getDb();
+    const { age, year, month, turning_point, stage, event_title, event_description, edited_content } = req.body;
+
+    console.log('✏️ Timeline update request - id:', id);
 
     // 本人確認
     const timeline = db.prepare('SELECT user_id FROM timeline WHERE id = ?').get(id) as any;
     if (!timeline) {
+      console.warn('⚠️ Timeline not found - id:', id);
       return res.status(404).json({ error: 'Timeline not found' });
     }
 
     if (timeline.user_id !== user.userId) {
+      console.error('❌ Access denied - user:', user.userId, 'timeline owner:', timeline.user_id);
       return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
@@ -208,16 +215,21 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
       `UPDATE timeline
        SET age = COALESCE(?, age),
            year = COALESCE(?, year),
+           month = COALESCE(?, month),
+           turning_point = COALESCE(?, turning_point),
            stage = COALESCE(?, stage),
            event_title = COALESCE(?, event_title),
            event_description = COALESCE(?, event_description),
-           edited_content = COALESCE(?, edited_content)
+           edited_content = COALESCE(?, edited_content),
+           updated_at = datetime('now')
        WHERE id = ?`
     );
 
     stmt.run(
       age ? parseInt(age) : null,
       year ? parseInt(year) : null,
+      month ? parseInt(month) : null,
+      turning_point || null,
       stage || null,
       event_title || null,
       event_description || null,
@@ -227,8 +239,12 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
 
     const updatedTimeline = db.prepare('SELECT * FROM timeline WHERE id = ?').get(id);
 
-    console.log('✅ Timeline updated - id:', id);
-    res.json({ message: 'Timeline updated successfully', data: updatedTimeline });
+    console.log('✅ Timeline updated successfully - id:', id);
+    res.json({ 
+      success: true,
+      message: 'Timeline updated successfully', 
+      data: updatedTimeline 
+    });
   } catch (error: any) {
     console.error('❌ Error:', error);
     res.status(500).json({ error: error.message });
@@ -242,22 +258,30 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
+    const db = getDb();
+
+    console.log('🗑️ Timeline delete request - id:', id);
 
     // 本人確認
     const timeline = db.prepare('SELECT user_id FROM timeline WHERE id = ?').get(id) as any;
     if (!timeline) {
+      console.warn('⚠️ Timeline not found - id:', id);
       return res.status(404).json({ error: 'Timeline not found' });
     }
 
     if (timeline.user_id !== user.userId) {
+      console.error('❌ Access denied');
       return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
     const stmt = db.prepare('DELETE FROM timeline WHERE id = ?');
     stmt.run(id);
 
-    console.log('✅ Timeline deleted - id:', id);
-    res.json({ message: 'Timeline deleted successfully' });
+    console.log('✅ Timeline deleted successfully - id:', id);
+    res.json({ 
+      success: true,
+      message: 'Timeline deleted successfully' 
+    });
   } catch (error: any) {
     console.error('❌ Error:', error);
     res.status(500).json({ error: error.message });
