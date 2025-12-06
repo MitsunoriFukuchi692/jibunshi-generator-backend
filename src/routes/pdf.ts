@@ -3,23 +3,44 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db.js';
+import { verifyToken, extractToken } from '../utils/auth.js';
 
 const router = express.Router();
 
-// PDF生成エンドポイント
-router.post('/generate', async (req: Request, res: Response) => {
-  try {
-    const { userId } = req.body;
+// ============================================
+// 認証ミドルウェア
+// ============================================
+const authenticate = (req: Request, res: Response, next: Function) => {
+  const authHeader = req.headers.authorization;
+  const token = extractToken(authHeader);
 
-    if (!userId) {
-      return res.status(400).json({ error: 'userId is required' });
-    }
+  if (!token) {
+    return res.status(401).json({ error: '認証が必要です。トークンが見つかりません。' });
+  }
+
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: '無効または期限切れのトークンです。' });
+  }
+
+  (req as any).user = decoded;
+  next();
+};
+
+// PDF生成エンドポイント
+router.post('/generate', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const userId = user.userId;
+
+    console.log('📄 PDF generation request - userId:', userId);
 
     const db = getDb();
 
     // ユーザーデータ取得
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-    if (!user) {
+    const userRecord = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+    if (!userRecord) {
+      console.error('❌ User not found:', userId);
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -30,13 +51,21 @@ router.post('/generate', async (req: Request, res: Response) => {
       ORDER BY year ASC, month ASC
     `).all(userId) as any[];
 
+    console.log('📊 Found', timelines.length, 'timeline entries');
+
+    if (timelines.length === 0) {
+      console.warn('⚠️ No timeline data found for PDF generation');
+      return res.status(400).json({ error: 'No timeline data available for PDF generation' });
+    }
+
     // PDF生成
-    const pdfBuffer = await generatePDF(user, timelines, db);
+    const pdfBuffer = await generatePDF(userRecord, timelines, db);
 
     // PDF保存
     const pdfDir = path.join(process.cwd(), 'pdfs');
     if (!fs.existsSync(pdfDir)) {
       fs.mkdirSync(pdfDir, { recursive: true });
+      console.log('✅ Created pdfs directory');
     }
 
     const timestamp = Date.now();
@@ -44,23 +73,30 @@ router.post('/generate', async (req: Request, res: Response) => {
     const pdfPath = path.join(pdfDir, pdfFilename);
 
     fs.writeFileSync(pdfPath, pdfBuffer);
+    console.log('✅ PDF saved:', pdfPath);
 
     // PDFバージョン記録
-    db.prepare(`
+    const insertStmt = db.prepare(`
       INSERT INTO pdf_versions (user_id, file_path, filename, version, created_at)
       VALUES (?, ?, ?, ?, datetime('now'))
-    `).run(userId, pdfPath, pdfFilename, 1);
+    `);
+    insertStmt.run(userId, pdfPath, pdfFilename, 1);
+    console.log('✅ PDF version recorded');
 
     res.json({
       success: true,
+      message: 'PDF generated successfully',
       pdfId: timestamp,
       filename: pdfFilename,
       downloadUrl: `/api/pdf/${timestamp}/download`
     });
 
   } catch (error) {
-    console.error('PDF generation error:', error);
-    res.status(500).json({ error: 'PDF generation failed' });
+    console.error('❌ PDF generation error:', error);
+    res.status(500).json({ 
+      error: 'PDF generation failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
@@ -70,6 +106,8 @@ router.get('/:pdfId/download', async (req: Request, res: Response) => {
     const { pdfId } = req.params;
     const db = getDb();
 
+    console.log('📥 PDF download request - pdfId:', pdfId);
+
     // PDFファイル情報取得
     const pdfRecord = db.prepare(`
       SELECT * FROM pdf_versions 
@@ -77,8 +115,14 @@ router.get('/:pdfId/download', async (req: Request, res: Response) => {
       LIMIT 1
     `).get(`%${pdfId}%`) as any;
 
-    if (!pdfRecord || !fs.existsSync(pdfRecord.file_path)) {
+    if (!pdfRecord) {
+      console.error('❌ PDF record not found:', pdfId);
       return res.status(404).json({ error: 'PDF not found' });
+    }
+
+    if (!fs.existsSync(pdfRecord.file_path)) {
+      console.error('❌ PDF file not found on disk:', pdfRecord.file_path);
+      return res.status(404).json({ error: 'PDF file not found' });
     }
 
     const pdfBuffer = fs.readFileSync(pdfRecord.file_path);
@@ -87,9 +131,14 @@ router.get('/:pdfId/download', async (req: Request, res: Response) => {
     res.setHeader('Content-Disposition', `attachment; filename="${pdfRecord.filename}"`);
     res.send(pdfBuffer);
 
+    console.log('✅ PDF downloaded successfully');
+
   } catch (error) {
-    console.error('PDF download error:', error);
-    res.status(500).json({ error: 'PDF download failed' });
+    console.error('❌ PDF download error:', error);
+    res.status(500).json({ 
+      error: 'PDF download failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
@@ -148,21 +197,7 @@ async function generatePDF(user: any, timelines: any[], db: any): Promise<Buffer
           LIMIT 5
         `).all(timeline.id) as any[];
 
-        if (photos.length === 0) {
-          // timeline_photosにない場合、photosテーブルから取得
-          const backupPhotos = db.prepare(`
-            SELECT * FROM photos 
-            WHERE timeline_id = ? 
-            LIMIT 5
-          `).all(timeline.id) as any[];
-
-          if (backupPhotos.length > 0) {
-            doc.moveDown(0.3);
-            backupPhotos.forEach((photo: any) => {
-              insertPhoto(doc, photo.file_path, photo.description);
-            });
-          }
-        } else {
+        if (photos.length > 0) {
           doc.moveDown(0.3);
           photos.forEach((photo: any) => {
             insertPhoto(doc, photo.file_path, photo.description);
@@ -243,11 +278,13 @@ async function generatePDF(user: any, timelines: any[], db: any): Promise<Buffer
 function insertPhoto(doc: any, photoPath: string, description: string) {
   try {
     if (!photoPath || !fs.existsSync(photoPath)) {
+      console.warn('⚠️ Photo file not found:', photoPath);
       return;
     }
 
     const fileSize = fs.statSync(photoPath).size;
     if (fileSize === 0) {
+      console.warn('⚠️ Photo file is empty:', photoPath);
       return;
     }
 
@@ -272,7 +309,7 @@ function insertPhoto(doc: any, photoPath: string, description: string) {
     doc.moveDown(0.2);
 
   } catch (error) {
-    console.error(`Error inserting photo ${photoPath}:`, error);
+    console.error(`⚠️ Error inserting photo ${photoPath}:`, error);
   }
 }
 

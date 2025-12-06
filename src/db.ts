@@ -15,7 +15,6 @@ export function initDb(): void {
   db.pragma('foreign_keys = ON');
 
   // ===== 既存テーブルを削除（初期化時） =====
-  // 開発環境では毎回削除、本番環境ではコメントアウト
   try {
     db.exec(`
       DROP TABLE IF EXISTS interviews;
@@ -47,12 +46,16 @@ export function initDb(): void {
     CREATE TABLE IF NOT EXISTS timeline (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
+      age INTEGER,
       year INTEGER,
       month INTEGER,
       turning_point TEXT,
       event_description TEXT,
       edited_content TEXT,
       ai_corrected_text TEXT,
+      stage TEXT,
+      event_title TEXT,
+      is_auto_generated INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
