@@ -3,6 +3,9 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getDb } from './db.js';
+import dotenv from 'dotenv';
+
+dotenv.config(); 
 
 // ルートインポート
 import aiRoutes from './routes/ai.js';
@@ -104,8 +107,11 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // ===== エラーハンドリング =====
-app.use((err: any, req: Request, res: Response) => {
+app.use((err: any, req: Request, res: Response, next: Function) => {
   console.error('❌ Error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
   res.status(err.status || 500).json({
     error: err.message || 'Internal Server Error',
     timestamp: new Date().toISOString()

@@ -80,15 +80,15 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       INSERT INTO pdf_versions (user_id, file_path, filename, version, created_at)
       VALUES (?, ?, ?, ?, datetime('now'))
     `);
-    insertStmt.run(userId, pdfPath, pdfFilename, 1);
-    console.log('✅ PDF version recorded');
+    const result = insertStmt.run(userId, pdfPath, pdfFilename, 1);
+    console.log('✅ PDF version recorded - id:', result.lastInsertRowid);
 
     res.json({
       success: true,
       message: 'PDF generated successfully',
-      pdfId: timestamp,
+      pdfId: result.lastInsertRowid,  // ← DB の ID を使う
       filename: pdfFilename,
-      downloadUrl: `/api/pdf/${timestamp}/download`
+      downloadUrl: `/api/pdf/${result.lastInsertRowid}/download`
     });
 
   } catch (error) {
@@ -108,21 +108,23 @@ router.get('/:pdfId/download', async (req: Request, res: Response) => {
 
     console.log('📥 PDF download request - pdfId:', pdfId);
 
-    // PDFファイル情報取得
+    // PDFファイル情報取得（ID で直接検索）
     const pdfRecord = db.prepare(`
       SELECT * FROM pdf_versions 
-      WHERE created_at LIKE ? 
+      WHERE id = ?
       LIMIT 1
-    `).get(`%${pdfId}%`) as any;
+    `).get(pdfId) as any;
+
+    console.log('🔍 PDF record found:', !!pdfRecord);
 
     if (!pdfRecord) {
-      console.error('❌ PDF record not found:', pdfId);
+      console.error('❌ PDF record not found in DB - pdfId:', pdfId);
       return res.status(404).json({ error: 'PDF not found' });
     }
 
     if (!fs.existsSync(pdfRecord.file_path)) {
       console.error('❌ PDF file not found on disk:', pdfRecord.file_path);
-      return res.status(404).json({ error: 'PDF file not found' });
+      return res.status(404).json({ error: 'PDF file not found on disk' });
     }
 
     const pdfBuffer = fs.readFileSync(pdfRecord.file_path);
@@ -170,6 +172,11 @@ async function generatePDF(user: any, timelines: any[], db: any): Promise<Buffer
 
       // ===== 本文：タイムラインごとのコンテンツ =====
       timelines.forEach((timeline, index) => {
+        // ページが満杯の場合、新しいページを追加
+        if (doc.y > 650) {
+          doc.addPage();
+        }
+
         // セクションタイトル
         doc.fontSize(16).fillColor('#000000').font('Helvetica-Bold')
           .text(`${timeline.year}年${timeline.month ? `${timeline.month}月` : ''}`, { underline: true });
@@ -199,17 +206,17 @@ async function generatePDF(user: any, timelines: any[], db: any): Promise<Buffer
 
         if (photos.length > 0) {
           doc.moveDown(0.3);
+          console.log('📸 Found', photos.length, 'photos for timeline', timeline.id);
           photos.forEach((photo: any) => {
+            // ページが満杯の場合、新しいページを追加
+            if (doc.y > 700) {
+              doc.addPage();
+            }
             insertPhoto(doc, photo.file_path, photo.description);
           });
         }
 
         doc.moveDown(0.5);
-
-        // ページ判定
-        if (index < timelines.length - 1 && doc.y > 700) {
-          doc.addPage();
-        }
       });
 
       // ===== 年表（最後のページ） =====
@@ -254,21 +261,13 @@ async function generatePDF(user: any, timelines: any[], db: any): Promise<Buffer
         });
       }
 
-      // フッター（ページ番号）
-      const pages = doc.bufferedPageRange().count;
-      for (let i = 0; i < pages; i++) {
-        doc.switchToPage(i);
-        doc.fontSize(10).fillColor('#999999').text(
-          `ページ ${i + 1} / ${pages}`,
-          50,
-          doc.page.height - 30,
-          { align: 'center' }
-        );
-      }
+      // ✨ PDF完成
+      console.log('✅ PDF content generated successfully');
 
       doc.end();
 
     } catch (error) {
+      console.error('❌ PDF generation error details:', error);
       reject(error);
     }
   });
@@ -307,6 +306,7 @@ function insertPhoto(doc: any, photoPath: string, description: string) {
     }
 
     doc.moveDown(0.2);
+    console.log('✅ Photo inserted:', photoPath);
 
   } catch (error) {
     console.error(`⚠️ Error inserting photo ${photoPath}:`, error);
