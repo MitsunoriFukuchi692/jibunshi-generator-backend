@@ -16,15 +16,15 @@ export function initDb(): void {
 
   // ===== 既存テーブルを削除（初期化時） =====
   try {
-    db.exec(`
-      DROP TABLE IF EXISTS interviews;
-      DROP TABLE IF EXISTS pdf_versions;
-      DROP TABLE IF EXISTS timeline_photos;
-      DROP TABLE IF EXISTS photos;
-      DROP TABLE IF EXISTS timeline;
-      DROP TABLE IF EXISTS users;
-    `);
-    console.log('✅ Dropped existing tables');
+   // db.exec(`
+     // DROP TABLE IF EXISTS interviews;
+      //DROP TABLE IF EXISTS pdf_versions;
+     // DROP TABLE IF EXISTS timeline_photos;
+    //  DROP TABLE IF EXISTS photos;
+     // DROP TABLE IF EXISTS timeline;
+     // DROP TABLE IF EXISTS users;
+    //`);
+    //console.log('✅ Dropped existing tables');
   } catch (error) {
     console.log('ℹ️ No existing tables to drop');
   }
@@ -35,7 +35,15 @@ export function initDb(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       age INTEGER,
-      email TEXT UNIQUE,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      birth_date TEXT,
+      gender TEXT,
+      address TEXT,
+      occupation TEXT,
+      bio TEXT,
+      status TEXT DEFAULT 'active',
+      progress_stage TEXT DEFAULT 'birth',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )

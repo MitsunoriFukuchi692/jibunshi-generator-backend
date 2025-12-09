@@ -13,9 +13,8 @@ import pdfRoutes from './routes/pdf.js';
 import timelineRoutes from './routes/timeline.js';
 import timelinePhotosRoutes from './routes/timeline_photos_router.js';
 import usersRoutes from './routes/users.js';
-import photosRoutes from './routes/photos.js';
 // import photoRoutes from './routes/photo.js';
-import interviewRoutes from './routes/interview.js';
+// import interviewRoutes from './routes/interview.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,14 +65,11 @@ app.use('/api/ai', aiRoutes);
 // PDFルート
 app.use('/api/pdf', pdfRoutes);
 
-// 写真ルート
-app.use('/api/photos', photosRoutes);
-
 // その他のルート
 app.use('/api/timeline', timelineRoutes);
 app.use('/api/timeline', timelinePhotosRoutes);  // 写真紐付けAPI
 // app.use('/api/photo', photoRoutes);
-app.use('/api/interview', interviewRoutes);
+// app.use('/api/interview', interviewRoutes);
 
 // ===== ルートエンドポイント =====
 app.get('/', (req: Request, res: Response) => {

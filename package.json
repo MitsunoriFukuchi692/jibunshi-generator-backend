@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.0",
+    "@fontsource/noto-sans-jp": "^5.2.8",
     "@google/generative-ai": "^0.24.1",
     "@types/pdfkit": "^0.17.4",
     "bcryptjs": "^3.0.3",

@@ -288,4 +288,158 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
   }
 });
 
+// ============================================
+// 📸 写真紐付け関連エンドポイント
+// ============================================
+
+// GET /api/timeline/:timelineId/photos - タイムラインの紐付き写真を取得
+router.get('/:timelineId/photos', authenticate, (req: Request, res: Response) => {
+  try {
+    const { timelineId } = req.params;
+    const user = (req as any).user;
+    const db = getDb();
+
+    console.log('📸 Get timeline photos - timelineId:', timelineId);
+
+    // 本人確認（タイムラインの所有者確認）
+    const timeline = db.prepare('SELECT user_id FROM timeline WHERE id = ?').get(timelineId) as any;
+    if (!timeline || timeline.user_id !== user.userId) {
+      console.error('❌ Access denied');
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    // 紐付き写真を取得
+    const stmt = db.prepare(`
+      SELECT id, timeline_id, file_path, description, display_order, created_at
+      FROM timeline_photos
+      WHERE timeline_id = ?
+      ORDER BY display_order ASC, created_at ASC
+    `);
+    const photos = stmt.all(timelineId);
+
+    console.log('✅ Found', photos.length, 'photos for timeline:', timelineId);
+    res.json(photos);
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/timeline/:timelineId/photos - 写真をタイムラインに紐付ける
+router.post('/:timelineId/photos', authenticate, (req: Request, res: Response) => {
+  try {
+    const { timelineId } = req.params;
+    const user = (req as any).user;
+    const db = getDb();
+    const { photoIds, photoData } = req.body;
+
+    console.log('📸 Link photos to timeline - timelineId:', timelineId, 'photoCount:', photoIds?.length || photoData?.length);
+
+    // 本人確認
+    const timeline = db.prepare('SELECT user_id FROM timeline WHERE id = ?').get(timelineId) as any;
+    if (!timeline || timeline.user_id !== user.userId) {
+      console.error('❌ Access denied');
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    let insertedPhotos: any[] = [];
+
+    // パターン1: photo IDs で紐付ける（既存の photos テーブルから取得）
+    if (photoIds && Array.isArray(photoIds) && photoIds.length > 0) {
+      const photoStmt = db.prepare(`
+        SELECT id, file_path, description FROM photos 
+        WHERE id = ? AND user_id = ?
+      `);
+
+      const insertStmt = db.prepare(`
+        INSERT INTO timeline_photos (timeline_id, file_path, description, display_order, created_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+      `);
+
+      for (let idx = 0; idx < photoIds.length; idx++) {
+        const photoId = photoIds[idx];
+        const photo = photoStmt.get(photoId, user.userId) as any;
+
+        if (photo) {
+          const result = insertStmt.run(timelineId, photo.file_path, photo.description, idx);
+          insertedPhotos.push({
+            id: result.lastInsertRowid,
+            file_path: photo.file_path,
+            description: photo.description,
+            display_order: idx
+          });
+          console.log('✅ Photo linked - photoId:', photoId, 'timelineId:', timelineId);
+        } else {
+          console.warn('⚠️ Photo not found or not owned by user - photoId:', photoId);
+        }
+      }
+    }
+
+    // パターン2: 直接写真データで紐付ける
+    if (photoData && Array.isArray(photoData) && photoData.length > 0) {
+      const insertStmt = db.prepare(`
+        INSERT INTO timeline_photos (timeline_id, file_path, description, display_order, created_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+      `);
+
+      for (let idx = 0; idx < photoData.length; idx++) {
+        const photo = photoData[idx];
+        const result = insertStmt.run(
+          timelineId,
+          photo.file_path,
+          photo.description || '',
+          idx
+        );
+        insertedPhotos.push({
+          id: result.lastInsertRowid,
+          file_path: photo.file_path,
+          description: photo.description || '',
+          display_order: idx
+        });
+        console.log('✅ Photo data linked - timelineId:', timelineId);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `${insertedPhotos.length} photos linked successfully`,
+      data: insertedPhotos
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/timeline/:timelineId/photos/:photoId - 紐付きを削除
+router.delete('/:timelineId/photos/:photoId', authenticate, (req: Request, res: Response) => {
+  try {
+    const { timelineId, photoId } = req.params;
+    const user = (req as any).user;
+    const db = getDb();
+
+    console.log('🗑️ Unlink photo - timelineId:', timelineId, 'photoId:', photoId);
+
+    // 本人確認
+    const timeline = db.prepare('SELECT user_id FROM timeline WHERE id = ?').get(timelineId) as any;
+    if (!timeline || timeline.user_id !== user.userId) {
+      console.error('❌ Access denied');
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    const stmt = db.prepare('DELETE FROM timeline_photos WHERE id = ? AND timeline_id = ?');
+    stmt.run(photoId, timelineId);
+
+    console.log('✅ Photo unlinked successfully');
+    res.json({
+      success: true,
+      message: 'Photo unlinked successfully'
+    });
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

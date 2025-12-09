@@ -31,11 +31,11 @@ const authenticate = (req: Request, res: Response, next: Function) => {
 };
 
 // ============================================
-// POST /api/users/register - ユーザー登録（メール＋パスワードのみ）
+// POST /api/users/register - ユーザー登録（メール＋パスワード＋名前＋年齢）
 // ============================================
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, name, age } = req.body;
 
     // バリデーション
     if (!email || !password) {
@@ -44,6 +44,14 @@ router.post('/register', async (req: Request, res: Response) => {
 
     if (password.length < 6) {
       return res.status(400).json({ error: 'パスワードは6文字以上である必要があります。' });
+    }
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: '名前は必須です。' });
+    }
+
+    if (!age || age < 1 || age > 120) {
+      return res.status(400).json({ error: '正しい年齢を入力してください（1〜120）。' });
     }
 
     // メールアドレスの重複チェック
@@ -55,13 +63,13 @@ router.post('/register', async (req: Request, res: Response) => {
     // パスワードをハッシュ化
     const hashedPassword = await hashPassword(password);
 
-    // ユーザーを登録（名前などはNULLで初期化）
+    // ユーザーを登録（名前と年齢を保存）
     const stmt = db.prepare(
       `INSERT INTO users (name, email, password, age, birth_date, gender, address, occupation, bio, status, progress_stage)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
     );
 
-    const result = stmt.run('ユーザー', email, hashedPassword, null, null, null, null, null, null);
+    const result = stmt.run(name, email, hashedPassword, age, null, null, null, null, null);
 
     // JWTトークンを生成
     const token = generateToken(result.lastInsertRowid as number, email);
@@ -72,7 +80,9 @@ router.post('/register', async (req: Request, res: Response) => {
       userId: result.lastInsertRowid,
       user: {
         id: result.lastInsertRowid,
+        name,
         email,
+        age,
       },
     });
 
@@ -87,7 +97,7 @@ router.post('/register', async (req: Request, res: Response) => {
 // ============================================
 router.post('/login', async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, name, age } = req.body;
 
     // バリデーション
     if (!email || !password) {
@@ -99,23 +109,29 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     // ユーザーを検索
-    let user = db.prepare('SELECT id, email, password, name FROM users WHERE email = ?').get(email) as any;
+    let user = db.prepare('SELECT id, email, password, name, age FROM users WHERE email = ?').get(email) as any;
 
     // ユーザーが存在しない場合は自動登録
     if (!user) {
       try {
         const hashedPassword = await hashPassword(password);
+        
+        // 新規登録時は name と age が必須
+        const userName = name && name.trim() ? name : 'ユーザー';
+        const userAge = age && age >= 1 && age <= 120 ? age : null;
+        
         const stmt = db.prepare(
           `INSERT INTO users (name, email, password, age, birth_date, gender, address, occupation, bio, status, progress_stage)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'birth')`
         );
         
-        const result = stmt.run('ユーザー', email, hashedPassword, null, null, null, null, null, null);
+        const result = stmt.run(userName, email, hashedPassword, userAge, null, null, null, null, null);
         user = {
           id: result.lastInsertRowid,
           email,
           password: hashedPassword,
-          name: 'ユーザー'
+          name: userName,
+          age: userAge
         };
       } catch (registerError: any) {
         console.error('❌ Auto-registration error:', registerError);
@@ -141,6 +157,7 @@ router.post('/login', async (req: Request, res: Response) => {
         id: user.id,
         name: user.name,
         email: user.email,
+        age: user.age,
       },
     });
     
