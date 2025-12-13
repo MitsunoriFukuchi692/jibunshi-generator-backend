@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { initDb, getDb } from './db.js';
 import dotenv from 'dotenv';
 
-dotenv.config(); 
+dotenv.config();
 
 // ルートインポート
 import aiRoutes from './routes/ai.js';
@@ -108,7 +108,8 @@ app.get('/', (req: Request, res: Response) => {
       },
       interview: {
         create: 'POST /api/interview',
-        list: 'GET /api/interview/user/:userId'
+        list: 'GET /api/interview/user/:userId',
+        save: 'POST /api/interview/save'
       }
     }
   });
