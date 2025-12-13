@@ -131,29 +131,44 @@ router.post('/', authenticate, upload.single('file'), (req: Request, res: Respon
       return res.status(400).json({ error: 'ファイルがアップロードされていません。' });
     }
 
-    const { userId, stage, description } = req.body;
+    const { userId, timelineId, description } = req.body;
+
+    console.log('📸 Photo upload - userId:', userId, 'timelineId:', timelineId, 'filename:', req.file.filename);
 
     // 本人確認
     if (!userId || parseInt(userId) !== user.userId) {
       return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
-    const filePath = `/uploads/${req.file.filename}`;
+    // PDFで利用可能な絶対パスを作成
+    const filePath = path.join(__dirname, '../../uploads', req.file.filename);
+    const dbPath = `/uploads/${req.file.filename}`;
+
+    console.log('💾 File saved at:', filePath);
+    console.log('🔗 DB path:', dbPath);
 
     const stmt = db.prepare(
-      `INSERT INTO photos (user_id, filename, file_path, stage, description)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO photos (user_id, timeline_id, file_name, file_path, description, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, datetime('now'))`
     );
 
-    const result = stmt.run(userId, req.file.filename, filePath, stage || null, description || null);
+    const result = stmt.run(
+      userId,
+      timelineId ? parseInt(timelineId) : null,
+      req.file.originalname,
+      filePath,  // ⭐ 絶対パスをDBに保存
+      description || null
+    );
+
+    console.log('✅ Photo uploaded successfully - id:', result.lastInsertRowid);
 
     res.status(201).json({
       id: result.lastInsertRowid,
       user_id: userId,
-      filename: req.file.filename,
+      timeline_id: timelineId || null,
+      file_name: req.file.originalname,
       file_path: filePath,
-      stage,
-      description,
+      description: description || null,
       uploaded_at: new Date().toISOString(),
     });
   } catch (error: any) {
@@ -182,14 +197,17 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
     }
 
     // ファイルを削除
-    const filePath = path.join(__dirname, '../../' + photo.file_path);
+    const filePath = photo.file_path;
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+      console.log('✅ Photo file deleted:', filePath);
     }
 
     // DBから削除
     const stmt = db.prepare('DELETE FROM photos WHERE id = ?');
     stmt.run(id);
+
+    console.log('✅ Photo record deleted - id:', id);
 
     res.json({ message: '写真が削除されました。' });
   } catch (error: any) {

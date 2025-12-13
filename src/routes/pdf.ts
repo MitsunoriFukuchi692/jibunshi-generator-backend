@@ -47,12 +47,12 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // タイムラインデータ取得（年月情報がある回答のみ）
-    // ⚠️ year が NULL でなくても、データがなければスキップ
+    // ✅ タイムラインデータ取得（最新1件のみ）
     const timelines = db.prepare(`
       SELECT * FROM timeline 
       WHERE user_id = ?
-      ORDER BY year ASC, month ASC
+      ORDER BY created_at DESC
+      LIMIT 1
     `).all(userId) as any[];
 
     console.log('📊 Found', timelines.length, 'timeline entries');
@@ -62,23 +62,36 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No timeline data available for PDF generation' });
     }
 
-    // タイムラインごとに写真を取得
-    const timelinesWithPhotos = timelines.map((timeline: any) => {
-      const photos = db.prepare(`
-        SELECT 
-          id,
-          file_path,
-          description
-        FROM timeline_photos
-        WHERE timeline_id = ?
-        ORDER BY display_order ASC, created_at ASC
-      `).all(timeline.id) as any[];
-
-      return {
-        ...timeline,
-        photos
-      };
+    // ✅ タイムラインのデータを確認
+    const firstTimeline = timelines[0];
+    console.log('🔍 Timeline content check:', {
+      id: firstTimeline.id,
+      title: firstTimeline.event_title,
+      hasEditedContent: !!firstTimeline.edited_content,
+      editedContentLength: firstTimeline.edited_content?.length || 0,
+      hasEventDescription: !!firstTimeline.event_description,
+      eventDescriptionLength: firstTimeline.event_description?.length || 0
     });
+
+    // タイムラインに紐付いている写真を取得
+    let photos = db.prepare(`
+      SELECT 
+        id,
+        file_path,
+        description
+      FROM timeline_photos
+      WHERE timeline_id = ?
+      ORDER BY display_order ASC, created_at ASC
+    `).all(firstTimeline.id) as any[];
+
+    if (photos.length > 0) {
+      console.log('📸 Timeline', firstTimeline.id, 'has', photos.length, 'photos');
+    }
+
+    const timelinesWithPhotos = [{
+      ...firstTimeline,
+      photos
+    }];
 
     // PDF生成
     const pdfBuffer = await generatePDF(userRecord, timelinesWithPhotos, db);
@@ -182,14 +195,46 @@ async function generatePDF(user: any, timelinesWithPhotos: any[], db: any): Prom
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', (err: Error) => reject(err));
 
-      // 日本語フォント（Windowsシステムフォント）を使用
+      // 日本語フォント（環境に応じて適切なフォントを選択）
       try {
-        const fontPath = 'C:\\Windows\\Fonts\\NotoSansJP-VF.ttf';
-        doc.registerFont('JapaneseFont', fontPath);
-        doc.font('JapaneseFont');
-        console.log('✅ Japanese font loaded');
+        let fontPath: string;
+        const isWindows = process.platform === 'win32';
+        
+        if (isWindows) {
+          fontPath = 'C:\\Windows\\Fonts\\NotoSansJP-VF.ttf';
+        } else {
+          // Linux: システムフォントまたはプロジェクト内のフォントを使用
+          const possiblePaths = [
+            '/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf',
+            '/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf',
+            path.join(__dirname, '../fonts/NotoSansJP-Regular.ttf'),
+            path.join(process.cwd(), 'fonts/NotoSansJP-Regular.ttf'),
+          ];
+          
+          fontPath = '';
+          for (const p of possiblePaths) {
+            if (fs.existsSync(p)) {
+              fontPath = p;
+              break;
+            }
+          }
+          
+          if (!fontPath) {
+            console.warn('⚠️ Japanese font not found in system paths');
+            fontPath = '';
+          }
+        }
+        
+        if (fontPath && fs.existsSync(fontPath)) {
+          doc.registerFont('JapaneseFont', fontPath);
+          doc.font('JapaneseFont');
+          console.log('✅ Japanese font loaded from:', fontPath);
+        } else {
+          console.warn('⚠️ Font file not found:', fontPath);
+          doc.font('Helvetica');
+        }
       } catch (e) {
-        console.warn('⚠️ Japanese font not available:', e);
+        console.warn('⚠️ Japanese font loading error:', e);
         doc.font('Helvetica');
       }
 
@@ -206,47 +251,48 @@ async function generatePDF(user: any, timelinesWithPhotos: any[], db: any): Prom
 
       doc.addPage();
 
-      // ===== 本文：タイムラインごとのコンテンツ =====
-      timelinesWithPhotos.forEach((timeline, index) => {
+      // ===== 本文：最新の1つのタイムラインのみ =====
+      const firstTimeline = timelinesWithPhotos[0];
+      
+      if (firstTimeline) {
         // ページが満杯の場合、新しいページを追加
         if (doc.y > 650) {
           doc.addPage();
         }
 
-        // セクションタイトル（年月）
-        const yearText = timeline.year ? `${timeline.year}年` : '';
-        const monthText = timeline.month ? `${timeline.month}月` : '';
-        const titleText = yearText + monthText;
+        // セクションタイトル
+        doc.fontSize(14).fillColor('#000000').font('JapaneseFont')
+          .text('📖 自分史', { underline: true });
+        doc.moveDown(0.3);
 
-        if (titleText) {
-          doc.fontSize(16).fillColor('#000000').font('JapaneseFont')
-            .text(titleText, { underline: true });
-          doc.moveDown(0.3);
+        // ✅ edited_content があれば、それを優先的に使用（AIが修正したテキスト）
+        let contentToDisplay = '';
+        if (firstTimeline.edited_content && firstTimeline.edited_content.trim() !== '') {
+          console.log('📝 Using edited_content');
+          contentToDisplay = firstTimeline.edited_content;
+        } else if (firstTimeline.event_description && firstTimeline.event_description.trim() !== '') {
+          console.log('📝 Using event_description (fallback)');
+          contentToDisplay = firstTimeline.event_description;
         }
 
-        // ターニングポイント
-        if (timeline.turning_point) {
-          doc.fontSize(11).font('JapaneseFont').fillColor('#333333')
-            .text('ターニングポイント: ', { continued: true })
-            .font('JapaneseFont').text(timeline.turning_point);
-          doc.moveDown(0.3);
-        }
-
-        // 編集済みコンテンツ or オリジナル説明
-        const content = timeline.edited_content || timeline.event_description || '';
-        if (content) {
-          doc.fontSize(11).font('JapaneseFont').fillColor('#000000').text(content, {
+        // コンテンツを表示
+        if (contentToDisplay) {
+          doc.fontSize(11).font('JapaneseFont').fillColor('#000000').text(contentToDisplay, {
             align: 'left',
             width: 495
           });
+        } else {
+          console.warn('⚠️ No content to display');
+          doc.fontSize(11).font('JapaneseFont').fillColor('#999999')
+            .text('（コンテンツが入力されていません）');
         }
 
-        // 紐付いている写真を挿入
-        if (timeline.photos && timeline.photos.length > 0) {
+        // ✅ 紐付いている写真を挿入
+        if (firstTimeline.photos && firstTimeline.photos.length > 0) {
           doc.moveDown(0.3);
-          console.log('📸 Found', timeline.photos.length, 'photos for timeline', timeline.id);
+          console.log('📸 Found', firstTimeline.photos.length, 'photos for timeline', firstTimeline.id);
 
-          timeline.photos.forEach((photo: any) => {
+          firstTimeline.photos.forEach((photo: any) => {
             // ページが満杯の場合、新しいページを追加
             if (doc.y > 700) {
               doc.addPage();
@@ -256,52 +302,11 @@ async function generatePDF(user: any, timelinesWithPhotos: any[], db: any): Prom
         }
 
         doc.moveDown(0.5);
-      });
-
-      // ===== 年表（最後のページ） =====
-      // 有効なデータがある場合のみ年表ページを追加
-      const validTimelines = timelinesWithPhotos.filter(t => t.year !== null && t.year !== undefined);
-      if (validTimelines.length > 0) {
-        doc.addPage();
-        doc.fontSize(16).font('JapaneseFont').text('📊 人生年表', { underline: true });
-        doc.moveDown(0.3);
-
-        const tableTop = doc.y;
-        const col1X = 60;
-        const col2X = 150;
-        const col3X = 300;
-        const rowHeight = 25;
-
-        // ヘッダー
-        doc.fontSize(10).font('JapaneseFont').fillColor('#333333');
-        doc.text('年', col1X, tableTop);
-        doc.text('月', col2X, tableTop);
-        doc.text('できごと', col3X, tableTop);
-
-        // 区切り線
-        doc.strokeColor('#cccccc').moveTo(col1X, tableTop + 15).lineTo(500, tableTop + 15).stroke();
-
-        let currentY = tableTop + 20;
-
-        validTimelines.forEach((timeline: any) => {
-          // ページ満杯チェック
-          if (currentY > 750) {
-            doc.addPage();
-            currentY = 50;
-          }
-
-          const yearText = timeline.year ? timeline.year.toString() : '-';
-          const monthText = timeline.month ? timeline.month.toString() : '-';
-          const eventText = timeline.edited_content || timeline.event_description || timeline.turning_point || timeline.event_title || '-';
-
-          doc.fontSize(9).font('JapaneseFont').fillColor('#000000');
-          doc.text(yearText, col1X, currentY, { width: 80 });
-          doc.text(monthText, col2X, currentY, { width: 80 });
-          doc.text(eventText, col3X, currentY, { width: 200, height: rowHeight });
-
-          currentY += rowHeight;
-        });
       }
+
+      // ===== フッター =====
+      doc.fontSize(12).fillColor('#666666').font('JapaneseFont')
+        .text('このPDFはAIの支援を受けて作成された自分史です。', { align: 'center' });
 
       // ✨ PDF完成
       console.log('✅ PDF content generated successfully');
@@ -315,7 +320,7 @@ async function generatePDF(user: any, timelinesWithPhotos: any[], db: any): Prom
   });
 }
 
-// 写真挿入ヘルパー関数（Base64対応）
+// 写真挿入ヘルパー関数（Base64対応・絶対パス対応）
 function insertPhoto(doc: any, photoPath: string, description: string) {
   try {
     if (!photoPath || photoPath.trim() === '') {
@@ -372,15 +377,21 @@ function insertPhoto(doc: any, photoPath: string, description: string) {
       console.log('✅ Base64 image inserted');
     } else {
       // ファイルパスの場合
-      let fullPath = photoPath;
-      if (photoPath.startsWith('/')) {
+      let fullPath: string;
+
+      // 絶対パスと相対パスの両方に対応
+      if (path.isAbsolute(photoPath)) {
+        fullPath = photoPath;
+      } else if (photoPath.startsWith('/')) {
+        fullPath = path.join(process.cwd(), photoPath);
+      } else {
         fullPath = path.join(process.cwd(), photoPath);
       }
 
       console.log('🔍 Checking photo:', fullPath);
 
       if (!fs.existsSync(fullPath)) {
-        console.warn('⚠️ Photo file not found:', fullPath);
+        console.error('❌ Photo file NOT FOUND:', fullPath);
         return;
       }
 

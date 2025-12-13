@@ -150,18 +150,20 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
 });
 
 // ============================================
-// POST /api/ai/edit-text - テキスト自動編集＆保存
+// POST /api/ai/edit-text - テキスト自動修正
 // ============================================
 router.post('/edit-text', async (req: Request, res: Response) => {
   try {
     const anthropic = getAnthropicClient();
-    const { responses, stage, user_id } = req.body;
+    const { responses, stage, user_id, user_prompt } = req.body;
     const authHeader = req.headers.authorization;
     const token = extractToken(authHeader);
 
     console.log('📝 edit-text リクエスト受信');
     console.log('👤 user_id:', user_id);
     console.log('🎭 stage:', stage);
+    console.log('📨 user_prompt:', user_prompt ? '✅ あり' : '❌ なし');
+    console.log('📨 responses:', responses ? `✅ ${responses.length}件` : '❌ なし');
 
     // 認証チェック
     if (!token) {
@@ -185,15 +187,21 @@ router.post('/edit-text', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'ユーザーが見つかりません' });
     }
 
-    if (!responses || !Array.isArray(responses) || responses.length === 0) {
-      return res.status(400).json({ error: 'responses array is required' });
-    }
+    // user_prompt がある場合と responses 配列がある場合に対応
+    let finalPrompt = '';
+    
+    if (user_prompt) {
+      // 新しいフォーマット：TextCorrectionPage から送られる user_prompt
+      console.log('✅ user_prompt フォーマットで処理');
+      finalPrompt = user_prompt;
+    } else if (responses && Array.isArray(responses) && responses.length > 0) {
+      // レガシーフォーマット：responses 配列から生成
+      console.log('✅ responses フォーマットで処理');
+      const responsesText = responses
+        .map((r, i) => `【回答${i + 1}】\n${r}`)
+        .join('\n\n');
 
-    const responsesText = responses
-      .map((r, i) => `【回答${i + 1}】\n${r}`)
-      .join('\n\n');
-
-    const prompt = `以下は高齢者の人生回想の断片です（ステージ: ${stage}）。
+      finalPrompt = `以下は高齢者の人生回想の断片です（ステージ: ${stage}）。
 これらを統合して、一つのまとまった文章にしてください。
 
 要件：
@@ -209,9 +217,15 @@ ${responsesText}
 ---
 
 統合版をそのまま返してください（マークダウンなし、JSON形式なし）。`;
+    } else {
+      return res.status(400).json({ 
+        error: 'user_prompt or responses array is required',
+        received: { user_prompt: !!user_prompt, responses: !!responses }
+      });
+    }
 
-    console.log('🤖 Claude API に修正リクエスト送信...');
-    console.log('📝 API Key exists:', !!process.env.ANTHROPIC_API_KEY);
+    console.log('🤖 Claude API にテキスト修正リクエスト送信...');
+    console.log('🔑 API Key exists:', !!process.env.ANTHROPIC_API_KEY);
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -219,7 +233,7 @@ ${responsesText}
       messages: [
         {
           role: 'user',
-          content: prompt,
+          content: finalPrompt,
         },
       ],
     });
@@ -227,31 +241,16 @@ ${responsesText}
     const editedText = response.content[0].type === 'text' ? response.content[0].text : '';
 
     console.log('✅ 修正テキスト取得完了');
+    console.log('📏 修正テキスト長:', editedText.length, '文字');
 
-    // timeline テーブルに保存
-    const stmt = db.prepare(`
-      INSERT INTO timeline (user_id, stage, event_title, event_description, edited_content, is_auto_generated)
-      VALUES (?, ?, ?, ?, ?, 1)
-    `);
-
-    const result = stmt.run(
-      user_id,
-      stage,
-      `${stage}ステージの自動修正`,
-      `AIによる自動修正版`,
-      editedText
-    );
-
-    console.log('💾 timeline テーブルに保存完了');
-    console.log('📊 保存された ID:', result.lastInsertRowid);
+    // ✅ ここで timeline には保存しない
+    // TextCorrectionPage の handleSaveCompletion() が保存を担当する
 
     res.json({
-      id: result.lastInsertRowid,
-      stage,
-      original_count: responses.length,
       edited_content: editedText,
-      message: '修正結果を保存しました',
+      message: 'テキスト修正が完了しました。TextCorrectionPage で確認・保存してください。'
     });
+
   } catch (error: any) {
     console.error('❌ Text edit error:', error);
     console.error('📋 Error message:', error.message);
