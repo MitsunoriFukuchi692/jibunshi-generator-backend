@@ -127,6 +127,43 @@ export function initDb(): void {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+// ===== biography テーブル（自分史物語） =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS biography (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      edited_content TEXT,
+      ai_summary TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ===== biography_photos テーブル（自分史に紐付く写真） =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS biography_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      biography_id INTEGER NOT NULL,
+      file_path TEXT NOT NULL,
+      description TEXT,
+      display_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (biography_id) REFERENCES biography(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ===== timeline_metadata テーブル（人生年表） =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS timeline_metadata (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      important_events TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 
   // ===== インデックス作成（クエリ高速化） =====
   db.exec(`
