@@ -201,12 +201,19 @@ async function generatePDF(user: any, timelinesWithPhotos: any[], db: any, userI
     });
 
     // フォント設定
+    // フォント設定
     const fontPath = path.join(__dirname, '../fonts/NotoSansJP-Regular.ttf');
+    console.log('🔍 __dirname:', __dirname);
+    console.log('🔍 Constructed fontPath:', fontPath);
+    console.log('📁 fontPath exists:', fs.existsSync(fontPath));
+
     if (fs.existsSync(fontPath)) {
+      console.log('✅ Font file found - registering JapaneseFont');
       doc.registerFont('JapaneseFont', fontPath);
     } else {
-      console.warn('⚠️ Japanese font not found, using default');
+      console.log('❌ Font file NOT found - using Helvetica');
       doc.registerFont('JapaneseFont', 'Helvetica');
+    }
     }
 
     const buffer: Buffer[] = [];
