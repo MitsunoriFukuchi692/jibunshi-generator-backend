@@ -127,7 +127,8 @@ export function initDb(): void {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
-// ===== biography テーブル（自分史物語） =====
+
+  // ===== biography テーブル（自分史物語） =====
   db.exec(`
     CREATE TABLE IF NOT EXISTS biography (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,15 +154,24 @@ export function initDb(): void {
     )
   `);
 
-  // ===== timeline_metadata テーブル（人生年表） =====
+  // ===== timeline_metadata テーブル（人生年表） - 修正版 =====
+  // ✅ timeline_id カラムを追加
+  // ✅ turning_points カラムを追加
+  // ✅ custom_metadata カラムを追加
+  // ✅ user_id の UNIQUE 制約を削除（複合ユニークキーに変更）
   db.exec(`
     CREATE TABLE IF NOT EXISTS timeline_metadata (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      timeline_id INTEGER NOT NULL,
       important_events TEXT,
+      turning_points TEXT,
+      custom_metadata TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (timeline_id) REFERENCES timeline(id) ON DELETE CASCADE,
+      UNIQUE(user_id, timeline_id)
     )
   `);
 
@@ -173,6 +183,8 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_photos_timeline_id ON photos(timeline_id);
     CREATE INDEX IF NOT EXISTS idx_pdf_versions_user_id ON pdf_versions(user_id);
     CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON interviews(user_id);
+    CREATE INDEX IF NOT EXISTS idx_timeline_metadata_user_id ON timeline_metadata(user_id);
+    CREATE INDEX IF NOT EXISTS idx_timeline_metadata_timeline_id ON timeline_metadata(timeline_id);
   `);
 
   console.log('✅ Database initialized successfully');

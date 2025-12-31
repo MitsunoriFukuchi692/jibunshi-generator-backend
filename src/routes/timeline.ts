@@ -231,7 +231,7 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
     }
 
     if (timeline.user_id !== user.userId) {
-      console.error('❌ Access denied - user:', user.userId, 'timeline owner:', timeline.user_id);
+      console.error('❌ Access denied');
       return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
@@ -463,6 +463,87 @@ router.delete('/:timelineId/photos/:photoId', authenticate, (req: Request, res: 
   } catch (error: any) {
     console.error('❌ Error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// POST /api/timeline/:timelineId/metadata - timeline_metadata 作成
+// ============================================
+router.post('/:timelineId/metadata', authenticate, (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const db = getDb();
+    const { timelineId } = req.params;
+    const { user_id, important_events, turning_points, custom_metadata } = req.body;
+
+    console.log('📊 timeline_metadata creation request:', {
+      userId: user.userId,
+      timelineId,
+      hasImportantEvents: !!important_events,
+      hasTurningPoints: !!turning_points
+    });
+
+    // user_id の検証
+    if (user_id !== user.userId) {
+      console.error('❌ User ID mismatch');
+      return res.status(403).json({ error: 'アクセス権限がありません' });
+    }
+
+    // timeline が存在するか確認
+    const timeline = db.prepare('SELECT * FROM timeline WHERE id = ? AND user_id = ?').get(timelineId, user.userId) as any;
+    if (!timeline) {
+      console.error('❌ Timeline not found');
+      return res.status(404).json({ error: 'Timeline が見つかりません' });
+    }
+
+    // ✅ timeline_metadata に挿入（既存の場合は無視、新規の場合のみ作成）
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO timeline_metadata (
+          user_id, 
+          timeline_id, 
+          important_events, 
+          turning_points, 
+          custom_metadata, 
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `);
+
+      stmt.run(
+        user.userId,
+        timelineId,
+        important_events || '[]',  // JSON文字列として保存
+        turning_points || '[]',    // JSON文字列として保存
+        custom_metadata ? JSON.stringify(custom_metadata) : '{}'
+      );
+
+      console.log('✅ timeline_metadata created successfully - timelineId:', timelineId);
+
+      res.json({
+        success: true,
+        message: 'timeline_metadata created successfully',
+        timelineId
+      });
+
+    } catch (dbError: any) {
+      // UNIQUE 制約による重複エラーの場合は無視
+      if (dbError.message.includes('UNIQUE')) {
+        console.log('⚠️ timeline_metadata already exists for this timeline');
+        return res.json({
+          success: true,
+          message: 'timeline_metadata already exists',
+          timelineId
+        });
+      }
+      throw dbError;
+    }
+
+  } catch (error: any) {
+    console.error('❌ Error in POST /api/timeline/:timelineId/metadata:', error);
+    res.status(500).json({ 
+      error: 'timeline_metadata 作成に失敗しました',
+      details: error.message 
+    });
   }
 });
 

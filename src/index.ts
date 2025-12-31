@@ -9,10 +9,12 @@ dotenv.config();
 
 // ルートインポート
 import aiRoutes from './routes/ai.js';
+import biographyRoutes from './routes/biography.js';
 import pdfRoutes from './routes/pdf';
 import timelineRoutes from './routes/timeline.js';
 import usersRoutes from './routes/users.js';
 import photosRoutes from './routes/photos.js';
+import cleanupRoutes from './routes/cleanup.js';  // ✅ 新: cleanup ルート
 // import photoRoutes from './routes/photo.js';
 import interviewRoutes from './routes/interview.js';
 
@@ -58,6 +60,7 @@ app.get('/health', (req: Request, res: Response) => {
 
 // ユーザー認証ルート
 app.use('/api/users', usersRoutes);
+app.use('/api/biography', biographyRoutes);
 
 // AI ルート（テキスト修正）
 app.use('/api/ai', aiRoutes);
@@ -67,6 +70,9 @@ app.use('/api/pdf', pdfRoutes);
 
 // 写真ルート
 app.use('/api/photos', photosRoutes);
+
+// ✅ 新: クリーンアップルート（過去データ削除）
+app.use('/api/cleanup', cleanupRoutes);
 
 // その他のルート
 app.use('/api/timeline', timelineRoutes);
@@ -91,6 +97,9 @@ app.get('/', (req: Request, res: Response) => {
       pdf: {
         generate: 'POST /api/pdf/generate',
         download: 'GET /api/pdf/:pdfId/download'
+      },
+      cleanup: {
+        deleteOldData: 'DELETE /api/cleanup/old-data'  // ✅ 新: 過去データ削除
       },
       timeline: {
         create: 'POST /api/timeline',
@@ -138,11 +147,11 @@ app.use((req: Request, res: Response) => {
 // ===== サーバー起動 =====
 app.listen(PORT, () => {
   console.log(`
-╔════════════════════════════════════════╗
+╔═════════════════════════════════════════╗
 ║   🚀 自分史生成システム バックエンド    ║
 ║   ポート: ${PORT}                          ║
 ║   環境: ${process.env.NODE_ENV || 'development'}                 ║
-╚════════════════════════════════════════╝
+╚═════════════════════════════════════════╝
   `);
   console.log(`✅ サーバーが起動しました: http://localhost:${PORT}`);
   console.log(`📚 API ドキュメント: GET http://localhost:${PORT}/`);
