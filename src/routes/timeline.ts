@@ -185,6 +185,42 @@ router.post('/', authenticate, (req: Request, res: Response) => {
 });
 
 // ============================================
+// GET /api/timeline/user/:userId - ユーザーの timeline 一覧取得（認証必須）
+// ============================================
+router.get('/user/:userId', authenticate, (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const user = (req as any).user;
+    const db = getDb();
+
+    console.log('📖 Timeline list by userId request - userId:', userId, 'authenticated user:', user.userId);
+
+    // ユーザーは自分のデータのみ取得可能
+    if (parseInt(userId) !== user.userId) {
+      console.error('❌ Access denied - userId mismatch');
+      return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    const stmt = db.prepare(`
+      SELECT id, year, month, event_title as eventTitle, event_description as description
+      FROM timeline 
+      WHERE user_id = ?
+      ORDER BY year ASC, month ASC
+    `);
+    
+    const timelineData = stmt.all(userId) as any[];
+
+    console.log('✅ Timeline list retrieved:', timelineData.length, 'items');
+
+    // レスポンス形式を TimelineListPage.tsx に合わせる
+    res.json({ events: timelineData });
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
 // GET /api/timeline/:id - 特定の timeline 取得（認証必須）
 // ============================================
 router.get('/:id', authenticate, (req: Request, res: Response) => {
