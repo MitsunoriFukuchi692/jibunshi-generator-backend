@@ -140,12 +140,12 @@ router.post('/', authenticate, upload.single('file'), (req: Request, res: Respon
       return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
-    // PDFで利用可能な絶対パスを作成
-    const filePath = path.join(__dirname, '../../uploads', req.file.filename);
-    const dbPath = `/uploads/${req.file.filename}`;
+    // ✅ 修正: ファイル名のみをDBに保存（パスは読み込み時に動的に構築）
+    const savedFilename = req.file.filename;
+    const actualFilePath = path.join(__dirname, '../../uploads', savedFilename);
 
-    console.log('💾 File saved at:', filePath);
-    console.log('🔗 DB path:', dbPath);
+    console.log('💾 File saved at:', actualFilePath);
+    console.log('🔗 DB filename:', savedFilename);
 
     const stmt = db.prepare(
       `INSERT INTO photos (user_id, timeline_id, file_name, file_path, description, uploaded_at)
@@ -156,7 +156,7 @@ router.post('/', authenticate, upload.single('file'), (req: Request, res: Respon
       userId,
       timelineId ? parseInt(timelineId) : null,
       req.file.originalname,
-      filePath,  // ⭐ 絶対パスをDBに保存
+      savedFilename,  // ✅ ファイル名のみをDBに保存
       description || null
     );
 
@@ -167,7 +167,7 @@ router.post('/', authenticate, upload.single('file'), (req: Request, res: Respon
       user_id: userId,
       timeline_id: timelineId || null,
       file_name: req.file.originalname,
-      file_path: filePath,
+      file_path: savedFilename,  // ✅ ファイル名のみを返す
       description: description || null,
       uploaded_at: new Date().toISOString(),
     });

@@ -274,10 +274,20 @@ async function generatePDF(
             let isBase64 = false;
 
             if (photo.file_path.startsWith('data:')) {
+              // ✅ Base64データの場合
               isBase64 = true;
               photoPath = photo.file_path;
-            } else if (fs.existsSync(photo.file_path)) {
-              photoPath = photo.file_path;
+            } else {
+              // ✅ 修正: file_path はファイル名のみなので、動的にパスを構築
+              const fullPhotoPath = path.join(__dirname, '../../uploads', photo.file_path);
+              if (fs.existsSync(fullPhotoPath)) {
+                photoPath = fullPhotoPath;
+              } else {
+                // フォールバック: DB に保存されたパスがそのまま絶対パスの可能性
+                if (fs.existsSync(photo.file_path)) {
+                  photoPath = photo.file_path;
+                }
+              }
             }
 
             if (!photoPath) {
@@ -297,13 +307,13 @@ async function generatePDF(
                 fit: [maxWidth, maxHeight],
                 align: 'center'
               });
-              console.log('📸 Base64 photo rendered - index:', photoIdx);
+              console.log('🔸 Base64 photo rendered - index:', photoIdx);
             } else {
               doc.image(photoPath, x, y, { 
                 fit: [maxWidth, maxHeight],
                 align: 'center'
               });
-              console.log('📸 File photo rendered - index:', photoIdx, 'path:', photoPath);
+              console.log('🔸 File photo rendered - index:', photoIdx, 'path:', photoPath);
             }
 
             pagePhotoCount++;
