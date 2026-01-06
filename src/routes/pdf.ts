@@ -84,12 +84,13 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
     console.log('🖼️ Photos found:', photos.length);
 
     // ✅ 修正: timeline テーブルから直接 year/month/event_title を取得
+    // ✅ is_auto_generated = 1 ではなく、year IS NOT NULL で取得（手動入力データも含める）
     console.log('📊 Fetching timeline data for user:', userId);
     const timelines = db.prepare(`
       SELECT id, year, month, event_title, event_description
       FROM timeline
-      WHERE user_id = ? AND is_auto_generated = 1
-      ORDER BY created_at ASC
+      WHERE user_id = ? AND year IS NOT NULL
+      ORDER BY year ASC, month ASC
     `).all(userId) as any[];
 
     console.log('📚 Found timeline records:', timelines.length);

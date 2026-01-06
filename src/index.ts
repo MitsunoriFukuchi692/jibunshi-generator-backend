@@ -10,13 +10,14 @@ dotenv.config();
 // ルートインポート
 import aiRoutes from './routes/ai.js';
 import biographyRoutes from './routes/biography.js';
-import pdfRoutes from './routes/pdf';
+import pdfRoutes from './routes/pdf.js';
 import timelineRoutes from './routes/timeline.js';
 import usersRoutes from './routes/users.js';
 import photosRoutes from './routes/photos.js';
 import cleanupRoutes from './routes/cleanup.js';  // ✅ 新: cleanup ルート
 // import photoRoutes from './routes/photo.js';
 import interviewRoutes from './routes/interview.js';
+import interviewSessionRoutes from './routes/interview-session.js';  // ✅ 新: interview-session ルート
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,12 +27,7 @@ const PORT = process.env.PORT || 3000;
 
 // ===== ミドルウェア設定 =====
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'https://robostudy.jp',
-    'https://jibunshi-generator-frontend.vercel.app'
-  ],
+  origin: '*',  // すべてのオリジンを許可（テスト用）
   credentials: true
 }));
 
@@ -79,6 +75,7 @@ app.use('/api/timeline', timelineRoutes);
 
 // app.use('/api/photo', photoRoutes);
 app.use('/api/interview', interviewRoutes);
+app.use('/api/interview-session', interviewSessionRoutes);  // ✅ 新: interview-session ルート
 
 // ===== ルートエンドポイント =====
 app.get('/', (req: Request, res: Response) => {
@@ -119,6 +116,11 @@ app.get('/', (req: Request, res: Response) => {
         create: 'POST /api/interview',
         list: 'GET /api/interview/user/:userId',
         save: 'POST /api/interview/save'
+      },
+      interviewSession: {
+        save: 'POST /api/interview-session/save',  // ✅ 新
+        load: 'GET /api/interview-session/load',   // ✅ 新
+        delete: 'DELETE /api/interview-session'    // ✅ 新
       }
     }
   });

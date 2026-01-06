@@ -3,11 +3,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import Database from 'better-sqlite3';
+import { getDb } from '../db.js'; // ✅ 修正: getDb をインポート
 import { verifyToken, extractToken } from '../utils/auth.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
 const router = Router();
 // Anthropicインスタンスを遅延初期化する関数
 const getAnthropicClient = () => {
@@ -98,7 +96,7 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
 - 温かみのある質問を5個生成
 - 思い出を引き出す質問
 - 感覚（匂い、音、季節感）に関する質問
-- 家族や周辺の人についての質問
+- 家族や周辺の人について質問
 - 高齢者が答えやすい言葉遣い
 
 以下のJSON形式で返してください：
@@ -158,13 +156,15 @@ router.post('/edit-text', async (req, res) => {
         if (decoded.userId !== user_id) {
             return res.status(403).json({ error: 'アクセス権限がありません' });
         }
+        // ✅ 修正: getDb() を使用
+        const db = getDb();
         // user_idが実際に存在するか確認
         const userCheck = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
         if (!userCheck) {
             console.error('❌ ユーザーが見つかりません:', user_id);
             return res.status(400).json({ error: 'ユーザーが見つかりません' });
         }
-        // user_prompt がある場合と responses 配列がある場合に対応
+        // user_prompt があるか responses 配列があるか対応
         let finalPrompt = '';
         if (user_prompt) {
             // 新しいフォーマット：TextCorrectionPage から送られる user_prompt

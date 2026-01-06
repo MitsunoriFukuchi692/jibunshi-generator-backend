@@ -24,7 +24,7 @@ const authenticate = (req, res, next) => {
     next();
 };
 // ============================================
-// POST /api/pdf/generate - PDFを生成（biography + metadata を合体）
+// POST /api/pdf/generate - PDFを生成
 // ============================================
 router.post('/generate', authenticate, async (req, res) => {
     try {
@@ -48,54 +48,58 @@ router.post('/generate', authenticate, async (req, res) => {
             console.warn('⚠️ No biography found');
             return res.status(400).json({ error: 'Biography not found' });
         }
-        console.log('📖 Biography found - length:', biography.edited_content.length);
-        // ✅ 自分史物語に紐づく写真を取得
+        // ✅ content が null でない、かつ UTF-8 文字列であることを確認
+        let biographyContent = biography.edited_content || '';
+        if (typeof biographyContent !== 'string') {
+            console.warn('⚠️ Biography content is not a string, converting:', typeof biographyContent);
+            biographyContent = String(biographyContent);
+        }
+        console.log('📖 Biography found - length:', biographyContent.length, 'first 100 chars:', biographyContent.substring(0, 100));
+        // ✅ 修正: timeline_photos から写真を取得（biography_photos ではなく）
+        console.log('📸 Fetching timeline photos for user:', userId);
         const photos = db.prepare(`
       SELECT file_path, description
-      FROM biography_photos
-      WHERE biography_id = ?
+      FROM timeline_photos
+      WHERE timeline_id IN (
+        SELECT id FROM timeline WHERE user_id = ? AND is_auto_generated = 1
+      )
       ORDER BY display_order ASC
-    `).all(biography.id);
-        console.log('📸 Photos:', photos.length);
-        // ✅ 人生年表（timeline_metadata）を取得
-        const timelineMetadata = db.prepare(`
-      SELECT important_events
-      FROM timeline_metadata
-      WHERE user_id = ?
-    `).get(userId);
+      LIMIT 20
+    `).all(userId);
+        console.log('🖼️ Photos found:', photos.length);
+        // ✅ 修正: timeline テーブルから直接 year/month/event_title を取得
+        // ✅ is_auto_generated = 1 ではなく、year IS NOT NULL で取得（手動入力データも含める）
+        console.log('📊 Fetching timeline data for user:', userId);
+        const timelines = db.prepare(`
+      SELECT id, year, month, event_title, event_description
+      FROM timeline
+      WHERE user_id = ? AND year IS NOT NULL
+      ORDER BY year ASC, month ASC
+    `).all(userId);
+        console.log('📚 Found timeline records:', timelines.length);
+        // ✅ timeline から importantEvents を構築
         let importantEvents = [];
-        if (timelineMetadata && timelineMetadata.important_events) {
-            try {
-                importantEvents = JSON.parse(timelineMetadata.important_events);
-                console.log('📊 Important events parsed:', importantEvents.length);
-            }
-            catch (e) {
-                console.warn('⚠️ Failed to parse important_events JSON');
-            }
+        if (timelines && timelines.length > 0) {
+            timelines.forEach((timeline, idx) => {
+                importantEvents.push({
+                    year: timeline.year || '-',
+                    month: timeline.month || '-',
+                    eventTitle: timeline.event_title || `できごと${idx + 1}`
+                });
+                console.log(`📍 Timeline ${idx + 1}: year=${timeline.year}, month=${timeline.month}, title=${timeline.event_title}`);
+            });
         }
+        console.log('📊 Total important events to display:', importantEvents.length);
         // ============================================
-        // PDF生成（biography + timelineMetadata を合体）
+        // PDFを生成（biography + timelineMetadata を統合）
         // ============================================
-        const pdfBuffer = await generatePDF(userRecord, biography, photos, importantEvents);
-        // PDFを保存
-        const pdfDir = path.join(__dirname, '../pdfs');
-        if (!fs.existsSync(pdfDir)) {
-            fs.mkdirSync(pdfDir, { recursive: true });
-        }
+        const pdfBuffer = await generatePDF(userRecord, biographyContent, photos, importantEvents);
+        // PDFをレスポンスで返す
         const filename = `autobiography_${userId}_${Date.now()}.pdf`;
-        const filepath = path.join(pdfDir, filename);
-        fs.writeFileSync(filepath, pdfBuffer);
-        console.log('✅ PDF saved:', filename);
-        // DBに記録
-        db.prepare(`
-      INSERT INTO pdf_versions (user_id, file_path, filename, version, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-    `).run(userId, `/pdfs/${filename}`, filename, 1, 'generated');
-        res.json({
-            success: true,
-            filename: filename,
-            filepath: `/pdfs/${filename}`
-        });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(pdfBuffer);
+        console.log('✅ PDF response sent:', filename, 'size:', pdfBuffer.length, 'bytes');
     }
     catch (error) {
         console.error('❌ PDF generation error:', error);
@@ -108,7 +112,7 @@ router.post('/generate', authenticate, async (req, res) => {
 router.get('/download/:filename', (req, res) => {
     try {
         const { filename } = req.params;
-        // セキュリティチェック: filename が安全か確認
+        // セキュリティチェック
         if (!filename || filename.includes('..') || filename.includes('/')) {
             return res.status(400).json({ error: 'Invalid filename' });
         }
@@ -127,26 +131,39 @@ router.get('/download/:filename', (req, res) => {
     }
 });
 // ============================================
-// PDF生成メイン処理
+// PDFを生成するメイン処理
 // ============================================
-async function generatePDF(user, biography, photos, importantEvents) {
+async function generatePDF(user, biographyContent, photos, importantEvents) {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({
             size: 'A4',
             margin: 40,
             bufferPages: true,
         });
+        // ============================================
         // フォント設定
+        // ============================================
         const fontPath = path.join(__dirname, '../../fonts/NotoSansJP-Regular.ttf');
-        console.log('🔍 Font path:', fontPath);
-        console.log('📁 Font exists:', fs.existsSync(fontPath));
+        console.log('📁 Font path construction:');
+        console.log('   __dirname:', __dirname);
+        console.log('   Full path:', fontPath);
+        console.log('   Exists:', fs.existsSync(fontPath));
+        let fontLoaded = false;
         if (fs.existsSync(fontPath)) {
-            console.log('✅ Font file found - registering JapaneseFont');
-            doc.registerFont('JapaneseFont', fontPath);
+            try {
+                doc.registerFont('JapaneseFont', fontPath);
+                fontLoaded = true;
+                console.log('✅ JapaneseFont registered successfully');
+            }
+            catch (fontError) {
+                console.error('❌ Failed to register font:', fontError);
+                // フォント登録失敗時は Helvetica にフォールバック
+                fontLoaded = false;
+            }
         }
         else {
-            console.log('❌ Font file NOT found - using Helvetica');
-            doc.registerFont('JapaneseFont', 'Helvetica');
+            console.warn('⚠️ Font file not found at:', fontPath);
+            console.log('   Falling back to Helvetica (English only)');
         }
         const buffer = [];
         doc.on('data', (chunk) => {
@@ -156,41 +173,48 @@ async function generatePDF(user, biography, photos, importantEvents) {
             resolve(Buffer.concat(buffer));
         });
         doc.on('error', (error) => {
-            console.error('❌ PDF error:', error);
+            console.error('❌ PDF document error:', error);
             reject(error);
         });
         try {
             // ============================================
             // ページ1: 表紙
             // ============================================
-            doc.fontSize(28).font('JapaneseFont').text('📖 わたしの自分史', { align: 'center' });
+            const titleFont = fontLoaded ? 'JapaneseFont' : 'Helvetica';
+            doc.fontSize(28).font(titleFont).text('📖 わたしの自分史', { align: 'center' });
             doc.moveDown(2);
-            doc.fontSize(18).font('JapaneseFont').text(user.name || '（名前未設定）', { align: 'center' });
+            doc.fontSize(18).font(titleFont).text(user.name || '（名前未設定）', { align: 'center' });
             doc.moveDown(1);
-            doc.fontSize(14).font('JapaneseFont').fillColor('#666666').text(`年齢: ${user.age || '未設定'}歳`, { align: 'center' });
+            doc.fontSize(14).font(titleFont).fillColor('#666666').text(`年齢: ${user.age || '未設定'}歳`, { align: 'center' });
             doc.moveDown(3);
-            doc.fontSize(12).font('JapaneseFont').fillColor('#999999').text(`作成日: ${new Date().toLocaleDateString('ja-JP')}`, { align: 'center' });
+            doc.fontSize(12).font(titleFont).fillColor('#999999').text(`作成日: ${new Date().toLocaleDateString('ja-JP')}`, { align: 'center' });
             // ============================================
-            // ページ2: 自分史物語（biography.edited_content）
+            // ページ2: 自分史物語
             // ============================================
             doc.addPage();
-            doc.fontSize(18).font('JapaneseFont').fillColor('#2c3e50').text('📚 わたしの人生物語', { underline: true });
+            doc.fontSize(18).font(titleFont).fillColor('#2c3e50').text('📚 わたしの人生物語', { underline: true });
             doc.moveDown(1);
-            if (biography.edited_content && biography.edited_content.trim()) {
-                console.log('📖 Displaying biography content');
-                doc.fontSize(11).font('JapaneseFont').fillColor('#000000');
-                doc.text(biography.edited_content, {
+            // ✅ 修正: biographyContent の UTF-8 安全性を確認
+            if (biographyContent && biographyContent.trim()) {
+                console.log('📝 Rendering biography content - length:', biographyContent.length);
+                doc.fontSize(11).font(titleFont).fillColor('#000000');
+                // ✅ 修正: テキスト描画時の width を指定して折り返しを制御
+                doc.text(biographyContent, {
                     align: 'left',
-                    width: 500
+                    width: 500,
+                    lineGap: 4
                 });
+            }
+            else {
+                console.warn('⚠️ No biography content to display');
             }
             // ============================================
             // 写真セクション
             // ============================================
             if (photos && photos.length > 0) {
-                console.log('📸 Adding photos section');
+                console.log('🖼️ Adding photos section - count:', photos.length);
                 doc.addPage();
-                doc.fontSize(16).font('JapaneseFont').fillColor('#2c3e50').text('📷 思い出の写真', { underline: true });
+                doc.fontSize(16).font(titleFont).fillColor('#2c3e50').text('📷 思い出の写真', { underline: true });
                 doc.moveDown(1);
                 const photosPerPage = 3;
                 let pagePhotoCount = 0;
@@ -203,63 +227,90 @@ async function generatePDF(user, biography, photos, importantEvents) {
                         let photoPath = null;
                         let isBase64 = false;
                         if (photo.file_path.startsWith('data:')) {
+                            // ✅ Base64データの場合
                             isBase64 = true;
                             photoPath = photo.file_path;
                         }
-                        else if (fs.existsSync(photo.file_path)) {
-                            photoPath = photo.file_path;
+                        else {
+                            // ✅ 修正: file_path はファイル名のみなので、動的にパスを構築
+                            const fullPhotoPath = path.join(__dirname, '../../uploads', photo.file_path);
+                            if (fs.existsSync(fullPhotoPath)) {
+                                photoPath = fullPhotoPath;
+                            }
+                            else {
+                                // フォールバック: DB に保存されたパスがそのまま絶対パスの可能性
+                                if (fs.existsSync(photo.file_path)) {
+                                    photoPath = photo.file_path;
+                                }
+                            }
                         }
                         if (!photoPath) {
-                            console.warn('⚠️ Photo skipped - invalid path');
+                            console.warn('⚠️ Photo skipped - invalid path:', photo.file_path?.substring(0, 50));
                             return;
                         }
                         const x = 50;
-                        const y = 80 + (pagePhotoCount * 200);
-                        const photoWidth = 500;
-                        const photoHeight = 150;
+                        const y = 80 + (pagePhotoCount * 180);
+                        const maxWidth = 500;
+                        const maxHeight = 150;
                         if (isBase64) {
                             const base64Data = photoPath.replace(/^data:image\/\w+;base64,/, '');
                             const photoBuffer = Buffer.from(base64Data, 'base64');
-                            doc.image(photoBuffer, x, y, { width: photoWidth, height: photoHeight });
+                            doc.image(photoBuffer, x, y, {
+                                fit: [maxWidth, maxHeight],
+                                align: 'center'
+                            });
+                            console.log('🔸 Base64 photo rendered - index:', photoIdx);
                         }
                         else {
-                            doc.image(photoPath, x, y, { width: photoWidth, height: photoHeight });
+                            doc.image(photoPath, x, y, {
+                                fit: [maxWidth, maxHeight],
+                                align: 'center'
+                            });
+                            console.log('🔸 File photo rendered - index:', photoIdx, 'path:', photoPath);
                         }
                         pagePhotoCount++;
                     }
                     catch (photoError) {
-                        console.warn('⚠️ Photo error:', photoError);
+                        console.warn('⚠️ Photo render error:', {
+                            index: photoIdx,
+                            error: photoError?.message,
+                            path: photo.file_path?.substring(0, 50)
+                        });
                     }
                 });
             }
             // ============================================
-            // 最後のページ: 人生年表（timeline_metadata.important_events）
+            // 最後のページ: 人生年表
             // ============================================
             doc.addPage();
-            doc.fontSize(16).font('JapaneseFont').fillColor('#2c3e50').text('📊 人生年表', { underline: true });
+            doc.fontSize(16).font(titleFont).fillColor('#2c3e50').text('📊 人生年表', { underline: true });
             doc.moveDown(0.5);
             const tableTop = doc.y;
             const col1X = 60;
             const col2X = 130;
             const col3X = 200;
             const rowHeight = 20;
-            // ヘッダー
-            doc.fontSize(10).font('JapaneseFont').fillColor('#333333');
+            // テーブルヘッダー
+            doc.fontSize(10).font(titleFont).fillColor('#333333');
             doc.text('年', col1X, tableTop, { width: 60 });
             doc.text('月', col2X, tableTop, { width: 60 });
             doc.text('できごと', col3X, tableTop, { width: 300 });
             // 区切り線
             doc.strokeColor('#cccccc').moveTo(col1X, tableTop + 15).lineTo(550, tableTop + 15).stroke();
             let currentY = tableTop + 20;
-            // important_events を表示
+            // ✅ 修正: importantEvents の表示とエラーハンドリング
             if (importantEvents && importantEvents.length > 0) {
-                console.log('📊 Displaying', importantEvents.length, 'events');
+                console.log('📊 Rendering important events:', importantEvents.length);
                 importantEvents.forEach((event, idx) => {
                     const yearText = event.year ? event.year.toString() : '-';
                     const monthText = event.month ? event.month.toString() : '-';
-                    const eventTitle = event.eventTitle || 'できごと';
-                    console.log(`📊 Event ${idx + 1}:`, yearText, monthText, eventTitle);
-                    doc.fontSize(9).font('JapaneseFont').fillColor('#000000');
+                    const eventTitle = event.eventTitle || event.event_title || 'イベント';
+                    console.log(`📝 Event ${idx + 1}:`, {
+                        year: yearText,
+                        month: monthText,
+                        title: eventTitle
+                    });
+                    doc.fontSize(9).font(titleFont).fillColor('#000000');
                     doc.text(yearText, col1X, currentY, { width: 60 });
                     doc.text(monthText, col2X, currentY, { width: 60 });
                     doc.text(eventTitle, col3X, currentY, { width: 300 });
@@ -267,11 +318,11 @@ async function generatePDF(user, biography, photos, importantEvents) {
                 });
             }
             else {
-                console.warn('⚠️ No important events');
-                doc.fontSize(9).font('JapaneseFont').fillColor('#999999');
+                console.warn('⚠️ No important events to display');
+                doc.fontSize(9).font(titleFont).fillColor('#999999');
                 doc.text('（重要なできごとが記録されていません）', col1X, currentY);
             }
-            console.log('✅ PDF content generated');
+            console.log('✅ PDF content generation completed successfully');
             doc.end();
         }
         catch (error) {
