@@ -211,4 +211,41 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
   }
 });
 
+// ✅ 修正された回答を更新
+router.post('/update-answers', checkAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { answersWithPhotos } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    const db = getDb();
+
+    // セッションを更新
+    const statement = db.prepare(`
+      UPDATE interview_session
+      SET answers_with_photos = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `);
+
+    statement.run(JSON.stringify(answersWithPhotos), userId);
+
+    console.log(`✅ 回答更新完了: user_id=${userId}`);
+    res.json({ 
+      success: true, 
+      message: 'Answers updated successfully',
+      user_id: userId,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ 回答更新エラー:', error);
+    res.status(500).json({ 
+      error: 'Failed to update answers',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export default router;
