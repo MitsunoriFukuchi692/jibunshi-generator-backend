@@ -91,6 +91,7 @@ router.post('/register', async (req, res) => {
         const stmt = db.prepare(`INSERT INTO users (name, age, birth_month, birth_day, birth_year, pin, status, progress_stage)
        VALUES (?, ?, ?, ?, ?, ?, 'active', 'birth')`);
         const result = stmt.run(name.trim(), age, birthMonth, birthDay, birthYear, pin.toString());
+        console.log(`✅ [register] User registered: name="${name.trim()}", userId=${result.lastInsertRowid}`);
         // JWTトークンを生成
         const token = generateToken(result.lastInsertRowid, name.trim());
         res.status(201).json({
@@ -119,10 +120,18 @@ router.post('/login/check-name', async (req, res) => {
         if (!name || !name.trim()) {
             return res.status(400).json({ error: 'お名前を入力してください。' });
         }
+        console.log(`\n🔍 [login/check-name] Request received at ${new Date().toISOString()}`);
+        console.log(`   Input name: "${name}" (trimmed: "${name.trim()}")`);
         // 同じ名前のユーザーを全て検索
         const users = findUsersByName(name);
+        console.log(`📊 [login/check-name] Database query result`);
+        console.log(`   Found ${users.length} user(s)`);
+        if (users.length > 0) {
+            console.log(`   Users:`, JSON.stringify(users, null, 2));
+        }
         if (users.length === 0) {
             // ユーザーが存在しない
+            console.log(`   ⚠️ No user found with name "${name}"`);
             return res.status(200).json({
                 exists: false,
                 count: 0,
@@ -132,6 +141,7 @@ router.post('/login/check-name', async (req, res) => {
         if (users.length === 1) {
             // 同じ名前が1人だけ → 月日入力へ（またはPIN直接）
             const user = users[0];
+            console.log(`   ✅ Single user found: ${user.name} (id=${user.id})`);
             return res.status(200).json({
                 exists: true,
                 count: 1,
@@ -141,6 +151,7 @@ router.post('/login/check-name', async (req, res) => {
             });
         }
         // 同じ名前が複数人 → 月日で区別
+        console.log(`   👥 Multiple users found: ${users.length}`);
         return res.status(200).json({
             exists: true,
             count: users.length,
@@ -171,11 +182,14 @@ router.post('/login/verify-birthday', async (req, res) => {
         if (birthMonth < 1 || birthMonth > 12 || birthDay < 1 || birthDay > 31) {
             return res.status(400).json({ error: '正しい生年月日を入力してください。' });
         }
+        console.log(`\n🔐 [login/verify-birthday] Verifying: ${name} / ${birthMonth}月${birthDay}日`);
         // 名前+月日でユーザーを検索
         const user = findUserByNameAndBirthday(name, birthMonth, birthDay);
         if (!user) {
+            console.log(`   ❌ No match found for ${name} / ${birthMonth}月${birthDay}日`);
             return res.status(404).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。もう一度確認してください。' });
         }
+        console.log(`   ✅ User verified: ${user.name} (id=${user.id})`);
         // ユーザーが見つかった → PIN入力へ
         res.status(200).json({
             userId: user.id,
@@ -201,15 +215,19 @@ router.post('/login/verify-pin', async (req, res) => {
         if (pin.toString().length !== 4 || !/^\d{4}$/.test(pin.toString())) {
             return res.status(400).json({ error: 'PINは4桁の数字で入力してください。' });
         }
+        console.log(`\n🔑 [login/verify-pin] Verifying PIN for userId=${userId}`);
         // ユーザーを取得
         const user = db.prepare('SELECT id, name, pin, age FROM users WHERE id = ?').get(userId);
         if (!user) {
+            console.log(`   ❌ User not found: id=${userId}`);
             return res.status(404).json({ error: 'ユーザーが見つかりません。' });
         }
         // PIN検証
         if (user.pin !== pin.toString()) {
+            console.log(`   ❌ PIN mismatch for user ${user.name}`);
             return res.status(401).json({ error: 'PINが正しくありません。もう一度お試しください。' });
         }
+        console.log(`   ✅ PIN verified for user: ${user.name}`);
         // JWTトークンを生成
         const token = generateToken(user.id, user.name);
         res.status(200).json({
@@ -249,6 +267,7 @@ router.post('/login/forgot-pin', async (req, res) => {
         // PINを更新
         const stmt = db.prepare('UPDATE users SET pin = ? WHERE id = ?');
         stmt.run(newPin.toString(), user.id);
+        console.log(`✅ [forgot-pin] PIN updated for user: ${user.name}`);
         res.status(200).json({
             message: 'PINが変更されました。新しいPINでログインしてください。',
             userId: user.id,

@@ -1,54 +1,130 @@
+// 📁 server/src/utils/auth.ts
+// ユーザー認証ユーティリティ（JWT トークン管理）
+
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
-const JWT_EXPIRATION = process.env.JWT_EXPIRATION || '7d';
+// JWT シークレットキー（環境変数から取得）
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
-/**
- * パスワードをハッシュ化
- */
-export const hashPassword = async (password: string): Promise<string> => {
-  const salt = await bcrypt.genSalt(10);
-  return bcrypt.hash(password, salt);
-};
-
-/**
- * パスワードを検証
- */
-export const verifyPassword = async (password: string, hash: string): Promise<boolean> => {
-  return bcrypt.compare(password, hash);
-};
-
+// ============================================
+// トークン生成
+// ============================================
 /**
  * JWTトークンを生成
+ * @param userId ユーザーID
+ * @param name ユーザー名（オプション）
+ * @returns JWTトークン
  */
-export const generateToken = (userId: number, email: string): string => {
-  return jwt.sign(
-    { userId, email },
-    JWT_SECRET as string,
-    { expiresIn: JWT_EXPIRATION } as any
-  );
-};
+export function generateToken(userId: number, name?: string): string {
+  const payload = {
+    userId,
+    name: name || '',
+    iat: Math.floor(Date.now() / 1000),
+  };
 
+  const token = jwt.sign(payload, JWT_SECRET, {
+    expiresIn: '7d', // 7日間有効
+  });
+
+  return token;
+}
+
+// ============================================
+// トークン検証
+// ============================================
 /**
  * JWTトークンを検証
+ * @param token JWTトークン
+ * @returns デコードされたペイロード（検証失敗時は null）
  */
-export const verifyToken = (token: string): { userId: number; email: string } | null => {
+export function verifyToken(token: string): { userId: number; name: string; iat: number } | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return decoded as { userId: number; email: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    return {
+      userId: decoded.userId,
+      name: decoded.name || '',
+      iat: decoded.iat,
+    };
   } catch (error) {
-    console.error('❌ Token verification failed:', error);
+    console.error('❌ Token verification failed:', error instanceof Error ? error.message : error);
     return null;
   }
-};
+}
 
+// ============================================
+// Authorization ヘッダーからトークン抽出
+// ============================================
 /**
- * Bearer トークンをヘッダーから抽出
+ * Authorization ヘッダーからトークンを抽出
+ * 形式: "Bearer <token>"
+ * @param authHeader Authorization ヘッダー
+ * @returns トークン（ない場合は null）
  */
-export const extractToken = (authHeader: string | undefined): string | null => {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+export function extractToken(authHeader: string | undefined): string | null {
+  if (!authHeader) {
     return null;
   }
-  return authHeader.substring(7); // "Bearer " を削除
+
+  // "Bearer <token>" 形式を想定
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return null;
+  }
+
+  return parts[1];
+}
+
+// ============================================
+// トークン更新（オプション）
+// ============================================
+/**
+ * 有効期限内のトークンを更新
+ * @param oldToken 古いトークン
+ * @returns 新しいトークン（失敗時は null）
+ */
+export function refreshToken(oldToken: string): string | null {
+  const decoded = verifyToken(oldToken);
+  if (!decoded) {
+    return null;
+  }
+
+  // 新しいトークンを生成
+  return generateToken(decoded.userId, decoded.name);
+}
+
+// ============================================
+// トークン情報取得（デバッグ用）
+// ============================================
+/**
+ * トークンの情報を取得（デバッグ用）
+ * @param token JWTトークン
+ * @returns トークン情報
+ */
+export function getTokenInfo(token: string): { userId: number; name: string; expiresIn?: string } | null {
+  try {
+    const decoded = jwt.decode(token, { complete: true }) as any;
+    if (!decoded) {
+      return null;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const expiresIn = decoded.payload.exp ? `${Math.floor((decoded.payload.exp - now) / 60)}分後` : '不明';
+
+    return {
+      userId: decoded.payload.userId,
+      name: decoded.payload.name || '',
+      expiresIn,
+    };
+  } catch (error) {
+    console.error('❌ Failed to get token info:', error);
+    return null;
+  }
+}
+
+export default {
+  generateToken,
+  verifyToken,
+  extractToken,
+  refreshToken,
+  getTokenInfo,
 };
