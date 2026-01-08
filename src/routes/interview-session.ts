@@ -46,7 +46,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     const db = getDb();
 
     // interview_session テーブルがあるか確認
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS interview_session (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL UNIQUE,
@@ -111,7 +111,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
     const db = getDb();
 
     // テーブルがあるか確認
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS interview_session (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL UNIQUE,
@@ -180,7 +180,7 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
     const db = getDb();
 
     // テーブルがあるか確認
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS interview_session (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL UNIQUE,
