@@ -36,8 +36,15 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const userId = user.userId;
+    
+    // ✅ フロントから送られたデータを受け取る
+    const { answersWithPhotos, timelines: requestTimelines } = req.body;
 
     console.log('📄 PDF generation request - userId:', userId);
+    console.log('📥 Request data:', {
+      answersWithPhotosLength: answersWithPhotos?.length || 0,
+      timelinesLength: requestTimelines?.length || 0
+    });
 
     const db = getDb();
 
@@ -48,26 +55,42 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // ✅ 自分史物語を取得
-    const biography = db.prepare(`
-      SELECT id, edited_content 
-      FROM biography 
-      WHERE user_id = ?
-    `).get(userId) as any;
+    // ✅ 修正：フロントから送られた answersWithPhotos を優先使用
+    // biography テーブルは参照データとして使用（バックアップ）
+    let biographyContent = '';
+    
+    if (answersWithPhotos && answersWithPhotos.length > 0) {
+      // ✅ フロントから送られた修正内容を使用（最新）
+      biographyContent = answersWithPhotos
+        .map((answer: any) => answer.text || '')
+        .filter((text: string) => text.trim())
+        .join('\n\n');
+      
+      console.log('✅ Using answersWithPhotos from frontend - length:', biographyContent.length);
+    } else {
+      // フォールバック：biography テーブルから取得
+      const biography = db.prepare(`
+        SELECT id, edited_content 
+        FROM biography 
+        WHERE user_id = ?
+      `).get(userId) as any;
 
-    if (!biography) {
-      console.warn('⚠️ No biography found');
-      return res.status(400).json({ error: 'Biography not found' });
+      if (biography && biography.edited_content) {
+        biographyContent = biography.edited_content;
+        console.log('⚠️ Fallback to biography table - length:', biographyContent.length);
+      } else {
+        console.warn('⚠️ No biography content available');
+        return res.status(400).json({ error: 'No biography content available' });
+      }
     }
 
     // ✅ content が null でない、かつ UTF-8 文字列であることを確認
-    let biographyContent = biography.edited_content || '';
     if (typeof biographyContent !== 'string') {
       console.warn('⚠️ Biography content is not a string, converting:', typeof biographyContent);
       biographyContent = String(biographyContent);
     }
 
-    console.log('📖 Biography found - length:', biographyContent.length, 'first 100 chars:', biographyContent.substring(0, 100));
+    console.log('📖 Biography content - length:', biographyContent.length, 'first 100 chars:', biographyContent.substring(0, 100));
 
     // ✅ 修正: timeline_photos から写真を取得（biography_photos ではなく）
     console.log('📸 Fetching timeline photos for user:', userId);
@@ -83,30 +106,48 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
 
     console.log('🖼️ Photos found:', photos.length);
 
-    // ✅ 修正: timeline テーブルから直接 year/month/event_title を取得
-    // ✅ is_auto_generated = 1 ではなく、year IS NOT NULL で取得（手動入力データも含める）
-    console.log('📊 Fetching timeline data for user:', userId);
-    const timelines = db.prepare(`
-      SELECT id, year, month, event_title, event_description
-      FROM timeline
-      WHERE user_id = ? AND year IS NOT NULL
-      ORDER BY year ASC, month ASC
-    `).all(userId) as any[];
-
-    console.log('📚 Found timeline records:', timelines.length);
-
-    // ✅ timeline から importantEvents を構築
+    // ✅ 修正：フロントから送られた timelines を優先使用
+    // フォールバック：requestTimelines がない場合はデータベースから取得
+    let timelines: any[] = [];
     let importantEvents: any[] = [];
     
-    if (timelines && timelines.length > 0) {
+    if (requestTimelines && requestTimelines.length > 0) {
+      // ✅ フロントから送られたtimelineデータを使用（最新）
+      timelines = requestTimelines;
+      console.log('✅ Using timelines from frontend - count:', timelines.length);
+      
+      // timelineから importantEvents を構築
       timelines.forEach((timeline: any, idx: number) => {
         importantEvents.push({
           year: timeline.year || '-',
           month: timeline.month || '-',
-          eventTitle: timeline.event_title || `できごと${idx + 1}`
+          eventTitle: timeline.event_title || timeline.eventTitle || `できごと${idx + 1}`
         });
-        console.log(`📍 Timeline ${idx + 1}: year=${timeline.year}, month=${timeline.month}, title=${timeline.event_title}`);
+        console.log(`📍 Timeline ${idx + 1}: year=${timeline.year}, month=${timeline.month}, title=${timeline.event_title || timeline.eventTitle}`);
       });
+    } else {
+      // フォールバック：データベースから取得
+      console.log('📊 Fetching timeline data from database for user:', userId);
+      timelines = db.prepare(`
+        SELECT id, year, month, event_title, event_description
+        FROM timeline
+        WHERE user_id = ? AND year IS NOT NULL
+        ORDER BY year ASC, month ASC
+      `).all(userId) as any[];
+
+      console.log('📚 Found timeline records:', timelines.length);
+
+      // ✅ timeline から importantEvents を構築
+      if (timelines && timelines.length > 0) {
+        timelines.forEach((timeline: any, idx: number) => {
+          importantEvents.push({
+            year: timeline.year || '-',
+            month: timeline.month || '-',
+            eventTitle: timeline.event_title || `できごと${idx + 1}`
+          });
+          console.log(`📍 Timeline ${idx + 1}: year=${timeline.year}, month=${timeline.month}, title=${timeline.event_title}`);
+        });
+      }
     }
 
     console.log('📊 Total important events to display:', importantEvents.length);

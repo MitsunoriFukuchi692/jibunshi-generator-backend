@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { generateToken, verifyToken, extractToken } from '../utils/auth.js';
+import { generateToken, verifyToken, extractToken, hashToken, calculateSessionExpiry } from '../utils/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '../../data/jibunshi.db');
@@ -54,6 +54,65 @@ function findUsersByName(name: string) {
   return stmt.all(name.trim()) as any[];
 }
 
+/**
+ * セッションを保存（ログイン時）
+ */
+function saveSession(userId: number, deviceId: string, token: string): boolean {
+  try {
+    const tokenHash = hashToken(token);
+    const expiresAt = calculateSessionExpiry();
+
+    // 既存のセッションがあれば削除
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+
+    // 新しいセッションを保存
+    const stmt = db.prepare(
+      `INSERT INTO sessions (user_id, device_id, token_hash, expires_at)
+       VALUES (?, ?, ?, ?)`
+    );
+
+    stmt.run(userId, deviceId, tokenHash, expiresAt.toISOString());
+    console.log(`   ✅ Session saved: userId=${userId}, deviceId=${deviceId}`);
+    return true;
+  } catch (error: any) {
+    console.error(`   ❌ Failed to save session:`, error);
+    return false;
+  }
+}
+
+/**
+ * セッションを検証
+ */
+function verifySession(userId: number, token: string): boolean {
+  try {
+    const tokenHash = hashToken(token);
+    const session = db.prepare(
+      'SELECT id, expires_at FROM sessions WHERE user_id = ? AND token_hash = ?'
+    ).get(userId, tokenHash) as any;
+
+    if (!session) {
+      console.log(`   ❌ Session not found for userId=${userId}`);
+      return false;
+    }
+
+    // 有効期限をチェック
+    const expiresAt = new Date(session.expires_at);
+    if (expiresAt < new Date()) {
+      console.log(`   ❌ Session expired for userId=${userId}`);
+      return false;
+    }
+
+    // last_activity を更新
+    db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+
+    console.log(`   ✅ Session verified: userId=${userId}`);
+    return true;
+  } catch (error: any) {
+    console.error(`   ❌ Failed to verify session:`, error);
+    return false;
+  }
+}
+
 // ============================================
 // 認証ミドルウェア
 // ============================================
@@ -71,6 +130,7 @@ const authenticate = (req: Request, res: Response, next: Function) => {
   }
 
   (req as any).user = decoded;
+  (req as any).token = token;
   next();
 };
 
@@ -80,7 +140,7 @@ const authenticate = (req: Request, res: Response, next: Function) => {
 // ============================================
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { name, age, birthMonth, birthDay, pin } = req.body;
+    const { name, age, birthMonth, birthDay, pin, deviceId } = req.body;
 
     // バリデーション
     if (!name || !name.trim()) {
@@ -124,6 +184,10 @@ router.post('/register', async (req: Request, res: Response) => {
 
     // JWTトークンを生成
     const token = generateToken(result.lastInsertRowid as number, name.trim());
+
+    // セッションを保存
+    const sessionDeviceId = deviceId || `device-${Date.now()}`;
+    saveSession(result.lastInsertRowid as number, sessionDeviceId, token);
 
     res.status(201).json({
       message: '登録が完了しました。',
@@ -252,11 +316,11 @@ router.post('/login/verify-birthday', async (req: Request, res: Response) => {
 });
 
 // ============================================
-// POST /api/users/login/verify-pin - ログイン：PIN検証
+// POST /api/users/login/verify-pin - ログイン：PIN検証 + セッション保存
 // ============================================
 router.post('/login/verify-pin', async (req: Request, res: Response) => {
   try {
-    const { userId, pin } = req.body;
+    const { userId, pin, deviceId } = req.body;
 
     if (!userId || !pin) {
       return res.status(400).json({ error: '必要な情報が不足しています。' });
@@ -288,6 +352,14 @@ router.post('/login/verify-pin', async (req: Request, res: Response) => {
 
     // JWTトークンを生成
     const token = generateToken(user.id, user.name);
+
+    // セッションを保存（✅ 新機能）
+    const sessionDeviceId = deviceId || `device-${Date.now()}`;
+    const sessionSaved = saveSession(user.id, sessionDeviceId, token);
+
+    if (!sessionSaved) {
+      return res.status(500).json({ error: 'セッション保存に失敗しました。' });
+    }
 
     res.status(200).json({
       message: 'ログインしました。',
@@ -352,6 +424,13 @@ router.post('/login/forgot-pin', async (req: Request, res: Response) => {
 router.get('/me', authenticate, (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
+    const token = (req as any).token;
+
+    // セッションを検証
+    if (!verifySession(user.userId, token)) {
+      return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
+    }
+
     const stmt = db.prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
     const userData = stmt.get(user.userId);
 
@@ -373,10 +452,16 @@ router.get('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
+    const token = (req as any).token;
 
     // 本人確認
     if (user.userId !== parseInt(id)) {
       return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    // セッションを検証
+    if (!verifySession(user.userId, token)) {
+      return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
     const stmt = db.prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
@@ -400,11 +485,17 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
+    const token = (req as any).token;
     const { age, progress_stage, status } = req.body;
 
     // 本人確認
     if (user.userId !== parseInt(id)) {
       return res.status(403).json({ error: 'アクセス権限がありません。' });
+    }
+
+    // セッションを検証
+    if (!verifySession(user.userId, token)) {
+      return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
     const stmt = db.prepare(
@@ -433,18 +524,47 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
+    const token = (req as any).token;
 
     // 本人確認
     if (user.userId !== parseInt(id)) {
       return res.status(403).json({ error: 'アクセス権限がありません。' });
     }
 
+    // セッションを検証
+    if (!verifySession(user.userId, token)) {
+      return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
+    }
+
     const stmt = db.prepare('DELETE FROM users WHERE id = ?');
     stmt.run(id);
+
+    // セッションも削除
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+
     res.json({ message: 'ユーザーが削除されました。' });
   } catch (error: any) {
     console.error('❌ Error:', error);
     res.status(500).json({ error: 'ユーザー削除に失敗しました。' });
+  }
+});
+
+// ============================================
+// POST /api/users/logout - ログアウト（セッション削除）
+// ============================================
+router.post('/logout', authenticate, (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+
+    // セッションを削除
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.userId);
+
+    console.log(`✅ [logout] User logged out: userId=${user.userId}`);
+
+    res.json({ message: 'ログアウトしました。' });
+  } catch (error: any) {
+    console.error('❌ Logout error:', error);
+    res.status(500).json({ error: 'ログアウトに失敗しました。' });
   }
 });
 

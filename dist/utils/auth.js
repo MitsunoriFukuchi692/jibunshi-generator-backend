@@ -1,6 +1,7 @@
 // 📁 server/src/utils/auth.ts
-// ユーザー認証ユーティリティ（JWT トークン管理）
+// ユーザー認証ユーティリティ（JWT トークン管理 + セッション管理）
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 // JWT シークレットキー（環境変数から取得）
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 // ============================================
@@ -108,11 +109,51 @@ export function getTokenInfo(token) {
         return null;
     }
 }
+// ============================================
+// トークンハッシュ化（セッション管理用）
+// ============================================
+/**
+ * トークンをハッシュ化（データベース保存用）
+ * @param token JWTトークン
+ * @returns ハッシュ値
+ */
+export function hashToken(token) {
+    return crypto
+        .createHash('sha256')
+        .update(token)
+        .digest('hex');
+}
+// ============================================
+// Device ID 生成
+// ============================================
+/**
+ * デバイスIDを生成（ユニーク識別子）
+ * フロントエンドで生成して、ログイン時に送信される
+ * @returns UUID形式のデバイスID
+ */
+export function generateDeviceId() {
+    return crypto.randomUUID();
+}
+// ============================================
+// セッション有効期限計算
+// ============================================
+/**
+ * セッション有効期限を計算
+ * @returns 有効期限の日時（7日後）
+ */
+export function calculateSessionExpiry() {
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + 7); // 7日後
+    return expiryDate;
+}
 export default {
     generateToken,
     verifyToken,
     extractToken,
     refreshToken,
     getTokenInfo,
+    hashToken,
+    generateDeviceId,
+    calculateSessionExpiry,
 };
 //# sourceMappingURL=auth.js.map

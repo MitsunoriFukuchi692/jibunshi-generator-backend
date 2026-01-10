@@ -38,12 +38,32 @@ export declare function getTokenInfo(token: string): {
     name: string;
     expiresIn?: string;
 } | null;
+/**
+ * トークンをハッシュ化（データベース保存用）
+ * @param token JWTトークン
+ * @returns ハッシュ値
+ */
+export declare function hashToken(token: string): string;
+/**
+ * デバイスIDを生成（ユニーク識別子）
+ * フロントエンドで生成して、ログイン時に送信される
+ * @returns UUID形式のデバイスID
+ */
+export declare function generateDeviceId(): string;
+/**
+ * セッション有効期限を計算
+ * @returns 有効期限の日時（7日後）
+ */
+export declare function calculateSessionExpiry(): Date;
 declare const _default: {
     generateToken: typeof generateToken;
     verifyToken: typeof verifyToken;
     extractToken: typeof extractToken;
     refreshToken: typeof refreshToken;
     getTokenInfo: typeof getTokenInfo;
+    hashToken: typeof hashToken;
+    generateDeviceId: typeof generateDeviceId;
+    calculateSessionExpiry: typeof calculateSessionExpiry;
 };
 export default _default;
 //# sourceMappingURL=auth.d.ts.map

@@ -176,6 +176,22 @@ export function initDb(): void {
     )
   `);
 
+  // ===== sessions テーブル（ログインセッション管理） =====
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      device_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      login_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // ===== timeline_metadata テーブル（人生年表） =====
   db.exec(`
     CREATE TABLE IF NOT EXISTS timeline_metadata (
@@ -205,6 +221,8 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_timeline_metadata_timeline_id ON timeline_metadata(timeline_id);
     CREATE INDEX IF NOT EXISTS idx_interview_sessions_user_id ON interview_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_users_name_birth ON users(name, birth_month, birth_day);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
   `);
 
   console.log('✅ Database initialized successfully');
