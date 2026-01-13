@@ -41,7 +41,7 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
     const base64Image = imageBuffer.toString('base64');
     const mimeType = photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     const response = await model.generateContent([
       {
@@ -113,7 +113,7 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
   ]
 }`;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     const response = await model.generateContent(prompt);
     const responseText = response.response.text();
@@ -209,7 +209,7 @@ ${responsesText}
     console.log('🤖 Gemini API にテキスト修正リクエスト送信...');
     console.log('✅ API Key exists:', !!process.env.GOOGLE_API_KEY);
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     const response = await model.generateContent(finalPrompt);
     const editedText = response.response.text();
