@@ -38,12 +38,13 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
     const userId = user.userId;
     
     // ✅ フロントから送られたデータを受け取る
-    const { answersWithPhotos, timelines: requestTimelines } = req.body;
+    const { answersWithPhotos, timelines: requestTimelines, editedContent } = req.body;
 
     console.log('📄 PDF generation request - userId:', userId);
     console.log('📥 Request data:', {
       answersWithPhotosLength: answersWithPhotos?.length || 0,
-      timelinesLength: requestTimelines?.length || 0
+      timelinesLength: requestTimelines?.length || 0,
+      editedContentLength: editedContent?.length || 0  // ✅ 新：editedContent の長さをログ
     });
 
     const db = getDb();
@@ -55,20 +56,37 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // ✅ 修正：フロントから送られた answersWithPhotos を優先使用
-    // biography テーブルは参照データとして使用（バックアップ）
+    // ✅ 修正：editedContent を最優先使用
+    // フロントから送られた editedContent（修正テキスト）を優先使用
     let biographyContent = '';
     
-    if (answersWithPhotos && answersWithPhotos.length > 0) {
-      // ✅ フロントから送られた修正内容を使用（最新）
-      biographyContent = answersWithPhotos
-        .map((answer: any) => answer.text || '')
-        .filter((text: string) => text.trim())
-        .join('\n\n');
-      
-      console.log('✅ Using answersWithPhotos from frontend - length:', biographyContent.length);
+    // ✅ 優先順位：1) editedContent（修正テキスト） > 2) biography table > 3) answersWithPhotos
+    if (editedContent && editedContent.trim().length > 0) {
+      // ✅ 修正テキストを使用（最優先）
+      biographyContent = editedContent;
+      console.log('✅ Using editedContent from frontend (修正テキスト) - length:', biographyContent.length);
+    } else if (answersWithPhotos && answersWithPhotos.length > 0) {
+      // フォールバック：biography テーブルから取得を試みる
+      const biography = db.prepare(`
+        SELECT id, edited_content 
+        FROM biography 
+        WHERE user_id = ?
+      `).get(userId) as any;
+
+      if (biography && biography.edited_content && biography.edited_content.trim().length > 0) {
+        biographyContent = biography.edited_content;
+        console.log('✅ Using biography table (修正済みテキスト) - length:', biographyContent.length);
+      } else {
+        // 最後の手段：answersWithPhotos を使用
+        biographyContent = answersWithPhotos
+          .map((answer: any) => answer.text || '')
+          .filter((text: string) => text.trim())
+          .join('\n\n');
+        
+        console.log('⚠️ Fallback to answersWithPhotos from frontend - length:', biographyContent.length);
+      }
     } else {
-      // フォールバック：biography テーブルから取得
+      // biography テーブルから取得
       const biography = db.prepare(`
         SELECT id, edited_content 
         FROM biography 
@@ -77,7 +95,7 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
 
       if (biography && biography.edited_content) {
         biographyContent = biography.edited_content;
-        console.log('⚠️ Fallback to biography table - length:', biographyContent.length);
+        console.log('✅ Using biography table - length:', biographyContent.length);
       } else {
         console.warn('⚠️ No biography content available');
         return res.status(400).json({ error: 'No biography content available' });
