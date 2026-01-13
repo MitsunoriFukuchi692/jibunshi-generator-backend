@@ -13,6 +13,7 @@
   "dependencies": {
     "@fontsource/noto-sans-jp": "^5.2.8",
     "@google/generative-ai": "^0.24.1",
+    "@huggingface/inference": "^4.13.5",
     "@types/pdfkit": "^0.17.4",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^9.2.2",
