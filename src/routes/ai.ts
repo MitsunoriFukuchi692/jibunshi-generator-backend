@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { HfInference } from '@huggingface/inference';
+import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,13 +10,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const router = Router();
 
-// Hugging Face クライアント（遅延初期化）
-const getHFClient = () => {
-  const apiKey = process.env.HF_TOKEN;
+// OpenAI クライアント（遅延初期化）
+const getOpenAIClient = () => {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('HF_TOKEN is not set in environment variables');
+    throw new Error('OPENAI_API_KEY is not set in environment variables');
   }
-  return new HfInference(apiKey);
+  return new OpenAI({ apiKey });
 };
 
 // ============================================
@@ -24,7 +24,7 @@ const getHFClient = () => {
 // ============================================
 router.post('/analyze-photo', async (req: Request, res: Response) => {
   try {
-    const hf = getHFClient();
+    const client = getOpenAIClient();
     const { photoPath } = req.body;
 
     if (!photoPath) {
@@ -38,11 +38,10 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
     }
 
     const imageBuffer = fs.readFileSync(fullPath);
-
-    // ✅ 修正：Hugging Face imageToText は Blob を期待
-    const blob = new Blob([imageBuffer], { 
-      type: photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
-    });
+    const base64Image = imageBuffer.toString('base64');
+    
+    // 画像形式を判定
+    const mimeType = photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
 
     const prompt = `この写真を詳細に分析してください。以下の情報をJSON形式で返してください:
 {
@@ -53,26 +52,62 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
   "suggested_questions": ["質問1", "質問2", "質問3"]
 }`;
 
-    // ✅ 修正：imageToText ではなく、textGeneration で画像説明を生成
-    // （Hugging Face の無料モデルは imageToText がない場合がある）
-    const response = await hf.textGeneration({
-      model: 'mistralai/Mistral-7B-Instruct-v0.1',
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 500,
-        temperature: 0.7,
-      },
+    const response = await client.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 500,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mimeType,
+                data: base64Image,
+              },
+            },
+            {
+              type: 'text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
     });
 
-    // 簡略版の分析結果を返す
-    const analysisText = response.generated_text || '写真の分析ができませんでした';
-    const analysis = {
-      scene_description: analysisText,
-      estimated_era: '不明',
-      suggested_stage: 'memory',
-      emotional_context: '思い出に関連した内容',
-      suggested_questions: ['この写真はいつ撮られましたか？', 'この時期について教えてください', 'このときの感情は？']
-    };
+    // レスポンスからテキストを抽出
+    const responseText = response.content[0].type === 'text' ? response.content[0].text : '';
+    
+    // JSON を抽出してパース
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    let analysis;
+    
+    try {
+      analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+        scene_description: responseText,
+        estimated_era: '不明',
+        suggested_stage: 'memory',
+        emotional_context: '思い出に関連した内容',
+        suggested_questions: [
+          'この写真はいつ撮られましたか？',
+          'この時期について教えてください',
+          'このときの感情は？'
+        ]
+      };
+    } catch {
+      analysis = {
+        scene_description: responseText,
+        estimated_era: '不明',
+        suggested_stage: 'memory',
+        emotional_context: '思い出に関連した内容',
+        suggested_questions: [
+          'この写真はいつ撮られましたか？',
+          'この時期について教えてください',
+          'このときの感情は？'
+        ]
+      };
+    }
 
     console.log('✅ Photo analysis completed');
     res.json(analysis);
@@ -87,7 +122,7 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
 // ============================================
 router.post('/generate-questions', async (req: Request, res: Response) => {
   try {
-    const hf = getHFClient();
+    const client = getOpenAIClient();
     const { userName, age, stage, photoDescription } = req.body;
 
     if (!stage) {
@@ -121,17 +156,20 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
   ]
 }`;
 
-    const response = await hf.textGeneration({
-      model: 'mistralai/Mistral-7B-Instruct-v0.1',
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 500,
-        temperature: 0.7,
-      },
+    const response = await client.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 500,
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
     });
 
-    const responseText = response.generated_text || '';
+    const responseText = response.content[0].type === 'text' ? response.content[0].text : '';
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    
     const questions = jsonMatch ? JSON.parse(jsonMatch[0]) : { 
       stage: stage,
       questions: [
@@ -156,7 +194,7 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
 // ============================================
 router.post('/edit-text', async (req: Request, res: Response) => {
   try {
-    const hf = getHFClient();
+    const client = getOpenAIClient();
     const { responses, stage, user_id, user_prompt } = req.body;
     const authHeader = req.headers.authorization;
     const token = extractToken(authHeader);
@@ -229,22 +267,24 @@ ${responsesText}
       });
     }
 
-    console.log('🤖 Hugging Face API にテキスト修正リクエスト送信...');
-    console.log('✅ HF Token exists:', !!process.env.HF_TOKEN);
+    console.log('🤖 OpenAI API にテキスト修正リクエスト送信...');
+    console.log('✅ OPENAI_API_KEY exists:', !!process.env.OPENAI_API_KEY);
 
-    const response = await hf.textGeneration({
-      model: 'mistralai/Mistral-7B-Instruct-v0.1',
-      inputs: finalPrompt,
-      parameters: {
-        max_new_tokens: 1000,
-        temperature: 0.7,
-      },
+    const response = await client.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 1000,
+      messages: [
+        {
+          role: 'user',
+          content: finalPrompt,
+        },
+      ],
     });
 
-    const editedText = response.generated_text || '';
+    const editedText = response.content[0].type === 'text' ? response.content[0].text : '';
 
     console.log('✅ 修正テキスト取得完了');
-    console.log('📝 修正テキスト長:', editedText.length, '文字');
+    console.log('📊 修正テキスト長:', editedText.length, '文字');
 
     // ✅ ここで timeline には保存しない
     // TextCorrectionPage の handleSaveCompletion() が保存を担当する
