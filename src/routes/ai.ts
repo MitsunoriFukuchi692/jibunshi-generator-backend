@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const router = Router();
 
-// OpenAI クライアント（遅延初期化）
+// OpenAI クライアント
 const getOpenAIClient = () => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -47,37 +47,41 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
 {
   "scene_description": "写真の場面の詳細な説明",
   "estimated_era": "推測される時代・年代",
-  "suggested_stage": "suggested_stageはbirth,childhood,school,work,memory,retirementのいずれか",
+  "suggested_stage": "birth,childhood,school,work,memory,retirementのいずれか",
   "emotional_context": "写真が表現する感情や雰囲気",
   "suggested_questions": ["質問1", "質問2", "質問3"]
 }`;
 
-    const response = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4-vision-preview',
       max_tokens: 500,
       messages: [
         {
           role: 'user',
           content: [
             {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mimeType,
-                data: base64Image,
+              type: 'image_url',
+              image_url: {
+                url: `data:${mimeType};base64,${base64Image}`,
               },
             },
             {
               type: 'text',
               text: prompt,
             },
-          ],
+          ] as any,
         },
       ],
     });
 
     // レスポンスからテキストを抽出
-    const responseText = response.content[0].type === 'text' ? response.content[0].text : '';
+    let responseText = '';
+    if (response.choices && response.choices.length > 0) {
+      const choice = response.choices[0];
+      if (choice.message && 'content' in choice.message && choice.message.content) {
+        responseText = choice.message.content;
+      }
+    }
     
     // JSON を抽出してパース
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
@@ -156,8 +160,8 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
   ]
 }`;
 
-    const response = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 500,
       messages: [
         {
@@ -167,7 +171,14 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
       ],
     });
 
-    const responseText = response.content[0].type === 'text' ? response.content[0].text : '';
+    let responseText = '';
+    if (response.choices && response.choices.length > 0) {
+      const choice = response.choices[0];
+      if (choice.message && 'content' in choice.message && choice.message.content) {
+        responseText = choice.message.content;
+      }
+    }
+    
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     
     const questions = jsonMatch ? JSON.parse(jsonMatch[0]) : { 
@@ -220,7 +231,7 @@ router.post('/edit-text', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'アクセス権限がありません' });
     }
 
-    // ✅ 修正: getDb() を使用
+    // getDb() を使用
     const db = getDb();
     
     // user_idが実際に存在するか確認
@@ -270,8 +281,8 @@ ${responsesText}
     console.log('🤖 OpenAI API にテキスト修正リクエスト送信...');
     console.log('✅ OPENAI_API_KEY exists:', !!process.env.OPENAI_API_KEY);
 
-    const response = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 1000,
       messages: [
         {
@@ -281,13 +292,16 @@ ${responsesText}
       ],
     });
 
-    const editedText = response.content[0].type === 'text' ? response.content[0].text : '';
+    let editedText = '';
+    if (response.choices && response.choices.length > 0) {
+      const choice = response.choices[0];
+      if (choice.message && 'content' in choice.message && choice.message.content) {
+        editedText = choice.message.content;
+      }
+    }
 
     console.log('✅ 修正テキスト取得完了');
     console.log('📊 修正テキスト長:', editedText.length, '文字');
-
-    // ✅ ここで timeline には保存しない
-    // TextCorrectionPage の handleSaveCompletion() が保存を担当する
 
     res.json({
       edited_content: editedText,
