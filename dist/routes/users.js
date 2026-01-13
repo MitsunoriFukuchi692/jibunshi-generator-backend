@@ -462,5 +462,21 @@ router.post('/logout', authenticate, (req, res) => {
         res.status(500).json({ error: 'ログアウトに失敗しました。' });
     }
 });
+// DEBUG: GET /api/users/debug/all-users - 全ユーザー確認（テスト用）
+router.get('/debug/all-users', (req, res) => {
+    try {
+        const users = db.prepare('SELECT id, name, age, birth_month, birth_day, created_at FROM users ORDER BY created_at DESC LIMIT 20').all();
+        console.log('📊 All users:', users);
+        res.json({
+            success: true,
+            count: users.length,
+            users: users
+        });
+    }
+    catch (error) {
+        console.error('❌ Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 export default router;
 //# sourceMappingURL=users.js.map

@@ -1,24 +1,22 @@
 import { Router, Request, Response } from 'express';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDb } from '../db.js';  // ✅ 修正: getDb をインポート
+import { getDb } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const router = Router();
 
-// Anthropicインスタンスを遅延初期化する関数
-const getAnthropicClient = () => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+// Google Generative AI クライアント（遅延初期化）
+const getGeminiClient = () => {
+  const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY is not set in environment variables');
+    throw new Error('GOOGLE_API_KEY is not set in environment variables');
   }
-  return new Anthropic({
-    apiKey,
-  });
+  return new GoogleGenerativeAI(apiKey);
 };
 
 // ============================================
@@ -26,7 +24,7 @@ const getAnthropicClient = () => {
 // ============================================
 router.post('/analyze-photo', async (req: Request, res: Response) => {
   try {
-    const anthropic = getAnthropicClient();
+    const genAI = getGeminiClient();
     const { photoPath } = req.body;
 
     if (!photoPath) {
@@ -43,42 +41,32 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
     const base64Image = imageBuffer.toString('base64');
     const mimeType = photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mimeType,
-                data: base64Image,
-              },
-            },
-            {
-              type: 'text',
-              text: `この写真を詳細に分析してください。以下の情報をJSON形式で返してください：
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    const response = await model.generateContent([
+      {
+        inlineData: {
+          mimeType: mimeType,
+          data: base64Image,
+        },
+      },
+      {
+        text: `この写真を詳細に分析してください。以下の情報をJSON形式で返してください:
 {
   "scene_description": "写真の場面の詳細な説明",
-  "estimated_era": "推定される時代・年代",
+  "estimated_era": "推測される時代・年代",
   "suggested_stage": "suggested_stageはbirth,childhood,school,work,memory,retirementのいずれか",
   "emotional_context": "写真が表現する感情や雰囲気",
   "suggested_questions": ["質問1", "質問2", "質問3"]
 }`,
-            },
-          ],
-        },
-      ],
-    });
+      },
+    ]);
 
-    const analysisText = response.content[0].type === 'text' ? response.content[0].text : '';
-
+    const analysisText = response.response.text();
     const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
     const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { error: 'Failed to parse analysis' };
 
+    console.log('✅ Photo analysis completed');
     res.json(analysis);
   } catch (error: any) {
     console.error('❌ Photo analysis error:', error);
@@ -91,7 +79,7 @@ router.post('/analyze-photo', async (req: Request, res: Response) => {
 // ============================================
 router.post('/generate-questions', async (req: Request, res: Response) => {
   try {
-    const anthropic = getAnthropicClient();
+    const genAI = getGeminiClient();
     const { userName, age, stage, photoDescription } = req.body;
 
     if (!stage) {
@@ -113,7 +101,7 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
 - 家族や周辺の人について質問
 - 高齢者が答えやすい言葉遣い
 
-以下のJSON形式で返してください：
+以下のJSON形式で返してください:
 {
   "stage": "${stage}",
   "questions": [
@@ -125,21 +113,14 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
   ]
 }`;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    const responseText = response.content[0].type === 'text' ? response.content[0].text : '';
+    const response = await model.generateContent(prompt);
+    const responseText = response.response.text();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     const questions = jsonMatch ? JSON.parse(jsonMatch[0]) : { error: 'Failed to parse questions' };
 
+    console.log('✅ Question generation completed');
     res.json(questions);
   } catch (error: any) {
     console.error('❌ Question generation error:', error);
@@ -152,7 +133,7 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
 // ============================================
 router.post('/edit-text', async (req: Request, res: Response) => {
   try {
-    const anthropic = getAnthropicClient();
+    const genAI = getGeminiClient();
     const { responses, stage, user_id, user_prompt } = req.body;
     const authHeader = req.headers.authorization;
     const token = extractToken(authHeader);
@@ -225,24 +206,16 @@ ${responsesText}
       });
     }
 
-    console.log('🤖 Claude API にテキスト修正リクエスト送信...');
-    console.log('🔑 API Key exists:', !!process.env.ANTHROPIC_API_KEY);
+    console.log('🤖 Gemini API にテキスト修正リクエスト送信...');
+    console.log('✅ API Key exists:', !!process.env.GOOGLE_API_KEY);
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      messages: [
-        {
-          role: 'user',
-          content: finalPrompt,
-        },
-      ],
-    });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    const editedText = response.content[0].type === 'text' ? response.content[0].text : '';
+    const response = await model.generateContent(finalPrompt);
+    const editedText = response.response.text();
 
     console.log('✅ 修正テキスト取得完了');
-    console.log('📏 修正テキスト長:', editedText.length, '文字');
+    console.log('📝 修正テキスト長:', editedText.length, '文字');
 
     // ✅ ここで timeline には保存しない
     // TextCorrectionPage の handleSaveCompletion() が保存を担当する
@@ -255,7 +228,6 @@ ${responsesText}
   } catch (error: any) {
     console.error('❌ Text edit error:', error);
     console.error('📋 Error message:', error.message);
-    console.error('📋 Error code:', error.code);
     res.status(500).json({ error: error.message });
   }
 });
