@@ -170,4 +170,15 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// DEBUG: テーブル初期化エンドポイント
+
+app.get('/api/init-db', (req, res) => {
+  try {
+    initDb(); // db.tsからimportした関数
+    res.json({ message: 'Database initialized successfully' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default app;
