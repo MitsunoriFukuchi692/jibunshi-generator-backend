@@ -1,15 +1,15 @@
 {
   "name": "jibunshi-generator-backend",
   "version": "1.0.0",
-  "description": "自分史自動作成WEBアプリ - バックエンド",
   "type": "module",
-  "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
     "start": "node dist/index.js",
-    "init-db": "tsx src/db.ts"
+    "build": "tsc",
+    "kill-port": "taskkill /F /IM node.exe"
   },
+  ...
+}
+
   "dependencies": {
     "@fontsource/noto-sans-jp": "^5.2.8",
     "@google/generative-ai": "^0.24.1",

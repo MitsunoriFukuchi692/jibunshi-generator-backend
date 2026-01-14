@@ -5,9 +5,18 @@ import { fileURLToPath } from 'url';
 import { generateToken, verifyToken, extractToken, hashToken, calculateSessionExpiry } from '../utils/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
 
+// ✅ 修正：環境変数をチェック
+let dbPath: string;
+if (process.env.DATABASE_PATH) {
+  dbPath = process.env.DATABASE_PATH;
+  console.log(`📁 [users.ts] Using DATABASE_PATH: ${dbPath}`);
+} else {
+  dbPath = path.join(__dirname, '../../data/jibunshi.db');
+  console.log(`📁 [users.ts] Using default path: ${dbPath}`);
+}
+
+const db = new Database(dbPath);
 const router = Router();
 
 // ============================================
@@ -140,7 +149,11 @@ const authenticate = (req: Request, res: Response, next: Function) => {
 // ============================================
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { name, age, birthMonth, birthDay, pin, deviceId } = req.body;
+    // ✅ 修正：camelCaseとsnake_caseの両方に対応
+    const { name, age, birthMonth, birth_month, birthDay, birth_day, pin, deviceId } = req.body;
+    
+    const bMonth = birthMonth || birth_month;
+    const bDay = birthDay || birth_day;
 
     // バリデーション
     if (!name || !name.trim()) {
@@ -151,11 +164,11 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: '正しい年齢を入力してください（1～120）。' });
     }
 
-    if (!birthMonth || birthMonth < 1 || birthMonth > 12) {
+    if (!bMonth || bMonth < 1 || bMonth > 12) {
       return res.status(400).json({ error: '正しい月を入力してください（1～12）。' });
     }
 
-    if (!birthDay || birthDay < 1 || birthDay > 31) {
+    if (!bDay || bDay < 1 || bDay > 31) {
       return res.status(400).json({ error: '正しい日を入力してください（1～31）。' });
     }
 
@@ -164,7 +177,7 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // 同じ名前+月日の組み合わせで重複チェック
-    const existingUser = findUserByNameAndBirthday(name, birthMonth, birthDay);
+    const existingUser = findUserByNameAndBirthday(name, bMonth, bDay);
     if (existingUser) {
       return res.status(400).json({ error: 'このお名前と生年月日の組み合わせは既に登録されています。' });
     }
@@ -178,9 +191,9 @@ router.post('/register', async (req: Request, res: Response) => {
        VALUES (?, ?, ?, ?, ?, ?, 'active', 'birth')`
     );
 
-    const result = stmt.run(name.trim(), age, birthMonth, birthDay, birthYear, pin.toString());
+    const result = stmt.run(name.trim(), age, bMonth, bDay, birthYear, pin.toString());
 
-    console.log(`✅ [register] User registered: name="${name.trim()}", userId=${result.lastInsertRowid}`);
+    console.log(`✅ [register] User registered: name="${name.trim()}", userId=${result.lastInsertRowid}, birth=${bMonth}/${bDay}`);
 
     // JWTトークンを生成
     const token = generateToken(result.lastInsertRowid as number, name.trim());
@@ -269,48 +282,46 @@ router.post('/login/check-name', async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('❌ Name check error:', error);
+    console.error('❌ Check name error:', error);
     res.status(500).json({ error: 'エラーが発生しました。' });
   }
 });
 
 // ============================================
-// POST /api/users/login/verify-birthday - ログイン：月日確認
+// POST /api/users/login/check-birthday - ログイン：月日確認
 // ============================================
-router.post('/login/verify-birthday', async (req: Request, res: Response) => {
+router.post('/login/check-birthday', async (req: Request, res: Response) => {
   try {
-    const { name, birthMonth, birthDay } = req.body;
+    const { name, birthMonth, birth_month, birthDay, birth_day } = req.body;
+    
+    const bMonth = birthMonth || birth_month;
+    const bDay = birthDay || birth_day;
 
-    if (!name || !name.trim() || !birthMonth || !birthDay) {
+    if (!name || !name.trim() || !bMonth || !bDay) {
       return res.status(400).json({ error: '必要な情報が不足しています。' });
     }
 
-    if (birthMonth < 1 || birthMonth > 12 || birthDay < 1 || birthDay > 31) {
-      return res.status(400).json({ error: '正しい生年月日を入力してください。' });
-    }
-
-    console.log(`\n🔐 [login/verify-birthday] Verifying: ${name} / ${birthMonth}月${birthDay}日`);
+    console.log(`\n📅 [login/check-birthday] Checking ${name} (${bMonth}/${bDay})`);
 
     // 名前+月日でユーザーを検索
-    const user = findUserByNameAndBirthday(name, birthMonth, birthDay);
+    const user = findUserByNameAndBirthday(name, bMonth, bDay);
 
     if (!user) {
-      console.log(`   ❌ No match found for ${name} / ${birthMonth}月${birthDay}日`);
-      return res.status(404).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。もう一度確認してください。' });
+      console.log(`   ❌ User not found: ${name} (${bMonth}/${bDay})`);
+      return res.status(400).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。' });
     }
 
-    console.log(`   ✅ User verified: ${user.name} (id=${user.id})`);
+    console.log(`   ✅ User found: ${user.name} (id=${user.id})`);
 
-    // ユーザーが見つかった → PIN入力へ
     res.status(200).json({
+      message: 'PINを入力してください。',
       userId: user.id,
       name: user.name,
-      age: user.age,
-      message: 'PIN（4桁）を入力してください。'
+      age: user.age
     });
 
   } catch (error: any) {
-    console.error('❌ Birthday verification error:', error);
+    console.error('❌ Check birthday error:', error);
     res.status(500).json({ error: 'エラーが発生しました。' });
   }
 });
@@ -384,9 +395,12 @@ router.post('/login/verify-pin', async (req: Request, res: Response) => {
 // ============================================
 router.post('/login/forgot-pin', async (req: Request, res: Response) => {
   try {
-    const { name, birthMonth, birthDay, newPin } = req.body;
+    const { name, birthMonth, birth_month, birthDay, birth_day, newPin } = req.body;
+    
+    const bMonth = birthMonth || birth_month;
+    const bDay = birthDay || birth_day;
 
-    if (!name || !name.trim() || !birthMonth || !birthDay) {
+    if (!name || !name.trim() || !bMonth || !bDay) {
       return res.status(400).json({ error: '必要な情報が不足しています。' });
     }
 
@@ -395,7 +409,7 @@ router.post('/login/forgot-pin', async (req: Request, res: Response) => {
     }
 
     // 名前+月日でユーザーを検索
-    const user = findUserByNameAndBirthday(name, birthMonth, birthDay);
+    const user = findUserByNameAndBirthday(name, bMonth, bDay);
 
     if (!user) {
       return res.status(404).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。' });
