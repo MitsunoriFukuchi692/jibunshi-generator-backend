@@ -2,13 +2,11 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import Database from 'better-sqlite3';
+import { getDb } from '../db.js';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import { verifyToken, extractToken } from '../utils/auth.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
 const router = Router();
 // ============================================
 // 認証ミドルウェア
@@ -66,6 +64,7 @@ router.get('/', authenticate, (req, res) => {
     try {
         const user = req.user;
         const { userId } = req.query;
+        const db = getDb();
         // 指定されたuserIdが自分のIDと一致するか確認
         if (userId && parseInt(userId) !== user.userId) {
             return res.status(403).json({ error: 'アクセス権限がありません。' });
@@ -87,6 +86,7 @@ router.get('/:id', authenticate, (req, res) => {
     try {
         const { id } = req.params;
         const user = req.user;
+        const db = getDb();
         const stmt = db.prepare('SELECT * FROM photos WHERE id = ?');
         const photo = stmt.get(id);
         if (!photo) {
@@ -109,6 +109,7 @@ router.get('/:id', authenticate, (req, res) => {
 router.post('/', authenticate, upload.single('file'), (req, res) => {
     try {
         const user = req.user;
+        const db = getDb();
         if (!req.file) {
             return res.status(400).json({ error: 'ファイルがアップロードされていません。' });
         }
@@ -150,6 +151,7 @@ router.delete('/:id', authenticate, (req, res) => {
     try {
         const { id } = req.params;
         const user = req.user;
+        const db = getDb();
         const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
         if (!photo) {
             return res.status(404).json({ error: '写真が見つかりません。' });

@@ -1,11 +1,29 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync, mkdirSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let db = null;
 export function initDb() {
-    const dbPath = path.join(__dirname, '../data/jibunshi.db');
+    // ✅ 本番環境では環境変数から読む、ローカルはデフォルト
+    let dbPath;
+    if (process.env.DATABASE_PATH) {
+        // 本番環境（Render）
+        dbPath = process.env.DATABASE_PATH;
+        console.log(`📁 Using DATABASE_PATH: ${dbPath}`);
+    }
+    else {
+        // ローカル開発
+        dbPath = path.join(__dirname, '../data/jibunshi.db');
+        console.log(`📁 Using default local path: ${dbPath}`);
+    }
+    // ✅ ディレクトリが存在しなければ作成
+    const dbDir = path.dirname(dbPath);
+    if (!existsSync(dbDir)) {
+        mkdirSync(dbDir, { recursive: true });
+        console.log(`📂 Created directory: ${dbDir}`);
+    }
     db = new Database(dbPath);
     // 外部キー制約を有効化
     db.pragma('foreign_keys = ON');
@@ -209,6 +227,7 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
   `);
     console.log('✅ Database initialized successfully');
+    console.log(`📊 Database location: ${dbPath}`);
 }
 export function getDb() {
     if (!db) {
@@ -222,5 +241,14 @@ export function closeDb() {
         db = null;
         console.log('Database connection closed');
     }
+}
+// ===== 自動初期化 =====
+// モジュール読み込み時に自動的にデータベースを初期化
+try {
+    initDb();
+    console.log('✅ Database auto-initialized on module load');
+}
+catch (error) {
+    console.error('❌ Failed to initialize database on module load:', error);
 }
 //# sourceMappingURL=db.js.map

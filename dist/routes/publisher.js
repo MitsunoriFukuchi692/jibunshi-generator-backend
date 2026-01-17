@@ -1,10 +1,5 @@
 import { Router } from 'express';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
+import { getDb } from '../db.js';
 const router = Router();
 // ============================================
 // GET /api/publisher/users - ユーザー一覧（管理者用）
@@ -12,6 +7,7 @@ const router = Router();
 router.get('/users', (req, res) => {
     try {
         const { status, stage } = req.query;
+        const db = getDb();
         let query = `
       SELECT 
         u.id, u.name, u.age, u.email, u.phone,
@@ -47,6 +43,7 @@ router.get('/users', (req, res) => {
 router.get('/users/:id/progress', (req, res) => {
     try {
         const { id } = req.params;
+        const db = getDb();
         const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
@@ -80,11 +77,12 @@ router.get('/users/:id/progress', (req, res) => {
     }
 });
 // ============================================
-// GET /api/publisher/users/:id/pdf-versions - PDF版履歴
+// GET /api/publisher/users/:id/pdf-versions - PDFバージョン履歴
 // ============================================
 router.get('/users/:id/pdf-versions', (req, res) => {
     try {
         const { id } = req.params;
+        const db = getDb();
         const stmt = db.prepare(`
       SELECT id, version, status, generated_at, pdf_path
       FROM pdf_versions
@@ -105,6 +103,7 @@ router.put('/users/:id/finalize', (req, res) => {
     try {
         const { id } = req.params;
         const { pdfVersionId } = req.body;
+        const db = getDb();
         if (!pdfVersionId) {
             return res.status(400).json({ error: 'pdfVersionId is required' });
         }
@@ -128,6 +127,7 @@ router.put('/users/:id/finalize', (req, res) => {
 // ============================================
 router.get('/dashboard', (req, res) => {
     try {
+        const db = getDb();
         const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get();
         const activeUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE status = ?').get('active');
         const completedUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE status = ?').get('completed');

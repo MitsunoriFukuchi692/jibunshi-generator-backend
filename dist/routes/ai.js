@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,20 +7,20 @@ import { getDb } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
-// Google Generative AI クライアント（遅延初期化）
-const getGeminiClient = () => {
-    const apiKey = process.env.GOOGLE_API_KEY;
+// OpenAI クライアント
+const getOpenAIClient = () => {
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-        throw new Error('GOOGLE_API_KEY is not set in environment variables');
+        throw new Error('OPENAI_API_KEY is not set in environment variables');
     }
-    return new GoogleGenerativeAI(apiKey);
+    return new OpenAI({ apiKey });
 };
 // ============================================
 // POST /api/ai/analyze-photo - 写真分析
 // ============================================
 router.post('/analyze-photo', async (req, res) => {
     try {
-        const genAI = getGeminiClient();
+        const client = getOpenAIClient();
         const { photoPath } = req.body;
         if (!photoPath) {
             return res.status(400).json({ error: 'photoPath is required' });
@@ -31,29 +31,74 @@ router.post('/analyze-photo', async (req, res) => {
         }
         const imageBuffer = fs.readFileSync(fullPath);
         const base64Image = imageBuffer.toString('base64');
+        // 画像形式を判定
         const mimeType = photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const response = await model.generateContent([
-            {
-                inlineData: {
-                    mimeType: mimeType,
-                    data: base64Image,
-                },
-            },
-            {
-                text: `この写真を詳細に分析してください。以下の情報をJSON形式で返してください:
+        const prompt = `この写真を詳細に分析してください。以下の情報をJSON形式で返してください:
 {
   "scene_description": "写真の場面の詳細な説明",
   "estimated_era": "推測される時代・年代",
-  "suggested_stage": "suggested_stageはbirth,childhood,school,work,memory,retirementのいずれか",
+  "suggested_stage": "birth,childhood,school,work,memory,retirementのいずれか",
   "emotional_context": "写真が表現する感情や雰囲気",
   "suggested_questions": ["質問1", "質問2", "質問3"]
-}`,
-            },
-        ]);
-        const analysisText = response.response.text();
-        const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-        const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { error: 'Failed to parse analysis' };
+}`;
+        const response = await client.chat.completions.create({
+            model: 'gpt-4-vision-preview',
+            max_tokens: 500,
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:${mimeType};base64,${base64Image}`,
+                            },
+                        },
+                        {
+                            type: 'text',
+                            text: prompt,
+                        },
+                    ],
+                },
+            ],
+        });
+        // レスポンスからテキストを抽出
+        let responseText = '';
+        if (response.choices && response.choices.length > 0) {
+            const choice = response.choices[0];
+            if (choice.message && 'content' in choice.message && choice.message.content) {
+                responseText = choice.message.content;
+            }
+        }
+        // JSON を抽出してパース
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        let analysis;
+        try {
+            analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+                scene_description: responseText,
+                estimated_era: '不明',
+                suggested_stage: 'memory',
+                emotional_context: '思い出に関連した内容',
+                suggested_questions: [
+                    'この写真はいつ撮られましたか？',
+                    'この時期について教えてください',
+                    'このときの感情は？'
+                ]
+            };
+        }
+        catch {
+            analysis = {
+                scene_description: responseText,
+                estimated_era: '不明',
+                suggested_stage: 'memory',
+                emotional_context: '思い出に関連した内容',
+                suggested_questions: [
+                    'この写真はいつ撮られましたか？',
+                    'この時期について教えてください',
+                    'このときの感情は？'
+                ]
+            };
+        }
         console.log('✅ Photo analysis completed');
         res.json(analysis);
     }
@@ -67,7 +112,7 @@ router.post('/analyze-photo', async (req, res) => {
 // ============================================
 router.post('/generate-questions', async (req, res) => {
     try {
-        const genAI = getGeminiClient();
+        const client = getOpenAIClient();
         const { userName, age, stage, photoDescription } = req.body;
         if (!stage) {
             return res.status(400).json({ error: 'stage is required' });
@@ -98,11 +143,34 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
     "質問5"
   ]
 }`;
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const response = await model.generateContent(prompt);
-        const responseText = response.response.text();
+        const response = await client.chat.completions.create({
+            model: 'gpt-4o-mini',
+            max_tokens: 500,
+            messages: [
+                {
+                    role: 'user',
+                    content: prompt,
+                },
+            ],
+        });
+        let responseText = '';
+        if (response.choices && response.choices.length > 0) {
+            const choice = response.choices[0];
+            if (choice.message && 'content' in choice.message && choice.message.content) {
+                responseText = choice.message.content;
+            }
+        }
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        const questions = jsonMatch ? JSON.parse(jsonMatch[0]) : { error: 'Failed to parse questions' };
+        const questions = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+            stage: stage,
+            questions: [
+                'このステージについて教えてください',
+                '特に思い出に残っていることはありますか？',
+                'その時期の家族や周辺の人について聞かせてください',
+                'どのような感情や気持ちを持っていましたか？',
+                'その時期で学んだことはありますか？'
+            ]
+        };
         console.log('✅ Question generation completed');
         res.json(questions);
     }
@@ -116,7 +184,7 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
 // ============================================
 router.post('/edit-text', async (req, res) => {
     try {
-        const genAI = getGeminiClient();
+        const client = getOpenAIClient();
         const { responses, stage, user_id, user_prompt } = req.body;
         const authHeader = req.headers.authorization;
         const token = extractToken(authHeader);
@@ -137,7 +205,7 @@ router.post('/edit-text', async (req, res) => {
         if (decoded.userId !== user_id) {
             return res.status(403).json({ error: 'アクセス権限がありません' });
         }
-        // ✅ 修正: getDb() を使用
+        // getDb() を使用
         const db = getDb();
         // user_idが実際に存在するか確認
         const userCheck = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
@@ -181,15 +249,27 @@ ${responsesText}
                 received: { user_prompt: !!user_prompt, responses: !!responses }
             });
         }
-        console.log('🤖 Gemini API にテキスト修正リクエスト送信...');
-        console.log('✅ API Key exists:', !!process.env.GOOGLE_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const response = await model.generateContent(finalPrompt);
-        const editedText = response.response.text();
+        console.log('🤖 OpenAI API にテキスト修正リクエスト送信...');
+        console.log('✅ OPENAI_API_KEY exists:', !!process.env.OPENAI_API_KEY);
+        const response = await client.chat.completions.create({
+            model: 'gpt-4o-mini',
+            max_tokens: 1000,
+            messages: [
+                {
+                    role: 'user',
+                    content: finalPrompt,
+                },
+            ],
+        });
+        let editedText = '';
+        if (response.choices && response.choices.length > 0) {
+            const choice = response.choices[0];
+            if (choice.message && 'content' in choice.message && choice.message.content) {
+                editedText = choice.message.content;
+            }
+        }
         console.log('✅ 修正テキスト取得完了');
-        console.log('📝 修正テキスト長:', editedText.length, '文字');
-        // ✅ ここで timeline には保存しない
-        // TextCorrectionPage の handleSaveCompletion() が保存を担当する
+        console.log('📊 修正テキスト長:', editedText.length, '文字');
         res.json({
             edited_content: editedText,
             message: 'テキスト修正が完了しました。TextCorrectionPage で確認・保存してください。'

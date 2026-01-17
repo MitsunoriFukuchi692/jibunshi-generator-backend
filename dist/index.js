@@ -60,6 +60,16 @@ app.use('/api/timeline', timelineRoutes);
 // app.use('/api/photo', photoRoutes);
 app.use('/api/interview', interviewRoutes);
 app.use('/api/interview-session', interviewSessionRoutes); // ✅ 新: interview-session ルート
+// DEBUG: テーブル初期化エンドポイント（404ハンドラーより前に定義）
+app.get('/api/init-db', (req, res) => {
+    try {
+        initDb(); // db.tsからimportした関数
+        res.json({ message: 'Database initialized successfully' });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 // ===== ルートエンドポイント =====
 app.get('/', (req, res) => {
     res.json({

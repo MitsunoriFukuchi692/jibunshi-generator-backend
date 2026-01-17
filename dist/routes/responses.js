@@ -1,11 +1,6 @@
 import { Router } from 'express';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
 const router = Router();
 // ============================================
 // 認証ミドルウェア
@@ -30,6 +25,7 @@ router.get('/', authenticate, (req, res) => {
     try {
         const user = req.user;
         const { userId, stage } = req.query;
+        const db = getDb();
         // 指定されたuserIdが自分のIDと一致するか確認
         if (userId && parseInt(userId) !== user.userId) {
             return res.status(403).json({ error: 'アクセス権限がありません。' });
@@ -56,6 +52,7 @@ router.get('/', authenticate, (req, res) => {
 router.post('/', authenticate, (req, res) => {
     try {
         const user = req.user;
+        const db = getDb();
         const { userId, questionId, stage, questionText, responseText, isVoice, photoId, } = req.body;
         // バリデーション
         if (!stage || !questionText || !responseText) {
@@ -94,6 +91,7 @@ router.get('/:id', authenticate, (req, res) => {
     try {
         const { id } = req.params;
         const user = req.user;
+        const db = getDb();
         const stmt = db.prepare('SELECT * FROM responses WHERE id = ?');
         const response = stmt.get(id);
         if (!response) {
@@ -117,6 +115,7 @@ router.delete('/:id', authenticate, (req, res) => {
     try {
         const { id } = req.params;
         const user = req.user;
+        const db = getDb();
         const response = db.prepare('SELECT * FROM responses WHERE id = ?').get(id);
         if (!response) {
             return res.status(404).json({ error: '回答が見つかりません。' });
