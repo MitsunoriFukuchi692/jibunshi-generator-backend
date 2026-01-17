@@ -1,23 +1,10 @@
 import { Router, Request, Response } from 'express';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from '../db.js';  // ✅ 修正：db.ts から getDb をimport
 import { generateToken, verifyToken, extractToken, hashToken, calculateSessionExpiry } from '../utils/auth.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ✅ 修正：環境変数をチェック
-let dbPath: string;
-if (process.env.DATABASE_PATH) {
-  dbPath = process.env.DATABASE_PATH;
-  console.log(`📁 [users.ts] Using DATABASE_PATH: ${dbPath}`);
-} else {
-  dbPath = path.join(__dirname, '../../data/jibunshi.db');
-  console.log(`📁 [users.ts] Using default path: ${dbPath}`);
-}
-
-const db = new Database(dbPath);
 const router = Router();
+
+// ✅ 修正：db.ts で既に initDb() が実行されているので、getDb() を使用
 
 // ============================================
 // ユーティリティ関数
@@ -47,7 +34,7 @@ function calculateBirthYear(age: number): number {
  * 名前+月日で既存ユーザーを検索
  */
 function findUserByNameAndBirthday(name: string, birthMonth: number, birthDay: number) {
-  const stmt = db.prepare(
+  const stmt = getDb().prepare(
     'SELECT id, name, age, birth_month, birth_day, birth_year FROM users WHERE name = ? AND birth_month = ? AND birth_day = ?'
   );
   return stmt.get(name.trim(), birthMonth, birthDay) as any;
@@ -57,7 +44,7 @@ function findUserByNameAndBirthday(name: string, birthMonth: number, birthDay: n
  * 同じ名前のユーザーを全て検索（複数人確認用）
  */
 function findUsersByName(name: string) {
-  const stmt = db.prepare(
+  const stmt = getDb().prepare(
     'SELECT id, name, age, birth_month, birth_day FROM users WHERE name = ?'
   );
   return stmt.all(name.trim()) as any[];
@@ -72,10 +59,10 @@ function saveSession(userId: number, deviceId: string, token: string): boolean {
     const expiresAt = calculateSessionExpiry();
 
     // 既存のセッションがあれば削除
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
 
     // 新しいセッションを保存
-    const stmt = db.prepare(
+    const stmt = getDb().prepare(
       `INSERT INTO sessions (user_id, device_id, token_hash, expires_at)
        VALUES (?, ?, ?, ?)`
     );
@@ -95,7 +82,7 @@ function saveSession(userId: number, deviceId: string, token: string): boolean {
 function verifySession(userId: number, token: string): boolean {
   try {
     const tokenHash = hashToken(token);
-    const session = db.prepare(
+    const session = getDb().prepare(
       'SELECT id, expires_at FROM sessions WHERE user_id = ? AND token_hash = ?'
     ).get(userId, tokenHash) as any;
 
@@ -112,7 +99,7 @@ function verifySession(userId: number, token: string): boolean {
     }
 
     // last_activity を更新
-    db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+    getDb().prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
 
     console.log(`   ✅ Session verified: userId=${userId}`);
     return true;
@@ -186,7 +173,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const birthYear = calculateBirthYear(age);
 
     // ユーザーを登録
-    const stmt = db.prepare(
+    const stmt = getDb().prepare(
       `INSERT INTO users (name, age, birth_month, birth_day, birth_year, pin, status, progress_stage)
        VALUES (?, ?, ?, ?, ?, ?, 'active', 'birth')`
     );
@@ -344,7 +331,7 @@ router.post('/login/verify-pin', async (req: Request, res: Response) => {
     console.log(`\n🔑 [login/verify-pin] Verifying PIN for userId=${userId}`);
 
     // ユーザーを取得
-    const user = db.prepare(
+    const user = getDb().prepare(
       'SELECT id, name, pin, age FROM users WHERE id = ?'
     ).get(userId) as any;
 
@@ -416,7 +403,7 @@ router.post('/login/forgot-pin', async (req: Request, res: Response) => {
     }
 
     // PINを更新
-    const stmt = db.prepare('UPDATE users SET pin = ? WHERE id = ?');
+    const stmt = getDb().prepare('UPDATE users SET pin = ? WHERE id = ?');
     stmt.run(newPin.toString(), user.id);
 
     console.log(`✅ [forgot-pin] PIN updated for user: ${user.name}`);
@@ -445,7 +432,7 @@ router.get('/me', authenticate, (req: Request, res: Response) => {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = db.prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
+    const stmt = getDb().prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
     const userData = stmt.get(user.userId);
 
     if (!userData) {
@@ -478,7 +465,7 @@ router.get('/:id', authenticate, (req: Request, res: Response) => {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = db.prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
+    const stmt = getDb().prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
     const userData = stmt.get(id);
 
     if (!userData) {
@@ -512,7 +499,7 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = db.prepare(
+    const stmt = getDb().prepare(
       `UPDATE users 
        SET age = COALESCE(?, age),
            progress_stage = COALESCE(?, progress_stage),
@@ -523,7 +510,7 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
 
     stmt.run(age, progress_stage, status, id);
 
-    const updatedUser = db.prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?').get(id);
+    const updatedUser = getDb().prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?').get(id);
     res.json(updatedUser);
   } catch (error: any) {
     console.error('❌ Error:', error);
@@ -550,11 +537,11 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = db.prepare('DELETE FROM users WHERE id = ?');
+    const stmt = getDb().prepare('DELETE FROM users WHERE id = ?');
     stmt.run(id);
 
     // セッションも削除
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
 
     res.json({ message: 'ユーザーが削除されました。' });
   } catch (error: any) {
@@ -571,7 +558,7 @@ router.post('/logout', authenticate, (req: Request, res: Response) => {
     const user = (req as any).user;
 
     // セッションを削除
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.userId);
+    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(user.userId);
 
     console.log(`✅ [logout] User logged out: userId=${user.userId}`);
 
@@ -585,7 +572,7 @@ router.post('/logout', authenticate, (req: Request, res: Response) => {
 // DEBUG: GET /api/users/debug/all-users - 全ユーザー確認（テスト用）
 router.get('/debug/all-users', (req: Request, res: Response) => {
   try {
-       const users = db.prepare('SELECT id, name, age, birth_month, birth_day, created_at FROM users ORDER BY created_at DESC LIMIT 20').all();
+       const users = getDb().prepare('SELECT id, name, age, birth_month, birth_day, created_at FROM users ORDER BY created_at DESC LIMIT 20').all();
     
     console.log('📊 All users:', users);
     res.json({
