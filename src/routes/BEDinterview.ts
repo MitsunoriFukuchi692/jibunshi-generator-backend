@@ -1,12 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
+import { getDb } from '../db.js';
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
 const router = Router();
@@ -16,7 +10,7 @@ router.post('/question', async (req: Request, res: Response) => {
   try {
     const { user_id, conversation_history } = req.body;
 
-    console.log('📝 [Interview] Request received');
+    console.log('📖 [Interview] Request received');
     console.log('👤 user_id:', user_id);
     console.log('💬 conversation_history length:', conversation_history?.length || 0);
 
@@ -45,8 +39,8 @@ router.post('/question', async (req: Request, res: Response) => {
 - 感情や思いを深掘りする
 
 進め方：
-1. 最初の質問：「どこで、いつ生まれましたか？」から始める
-2. 以後：ユーザーの回答に基づいて、関連する質問を続ける
+1. 最初の質問：「どこで、いつ生まれましたか？」から始まる
+2. 以降：ユーザーの回答に基づいて、関連する質問を続ける
 3. 15～20問程度でインタビューを完了する
 
 ユーザーが十分に話してくれたと判断したら、JSONで以下の形式で返してください：
@@ -59,7 +53,7 @@ router.post('/question', async (req: Request, res: Response) => {
       ? `これまでの会話：\n${conversationText}\n\n次の質問を生成してください。`
       : '初めての質問を生成してください。';
 
-    console.log('🔑 Google Gemini API Key exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
+    console.log('🔌 Google Gemini API Key exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
     console.log('🚀 Calling Google Gemini API...');
 
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
@@ -75,7 +69,7 @@ router.post('/question', async (req: Request, res: Response) => {
 
     const responseText = result.response.text();
     console.log('✅ Google Gemini API response received');
-    console.log('📝 Response text:', responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''));
+    console.log('📄 Response text:', responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''));
 
     // JSON またはテキストをパース
     try {
@@ -101,6 +95,7 @@ router.post('/question', async (req: Request, res: Response) => {
 router.post('/save', async (req: Request, res: Response) => {
   try {
     const { user_id, conversation } = req.body;
+    const db = getDb();
 
     console.log('💾 [Save] Request received');
     console.log('👤 user_id:', user_id);

@@ -1,11 +1,5 @@
 import { Router, Request, Response } from 'express';
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../../data/jibunshi.db');
-const db = new Database(dbPath);
+import { getDb } from '../db.js';
 
 const router = Router();
 
@@ -15,6 +9,7 @@ const router = Router();
 router.get('/users', (req: Request, res: Response) => {
   try {
     const { status, stage } = req.query;
+    const db = getDb();
     
     let query = `
       SELECT 
@@ -56,6 +51,7 @@ router.get('/users', (req: Request, res: Response) => {
 router.get('/users/:id/progress', (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const db = getDb();
     
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
     if (!user) {
@@ -93,11 +89,12 @@ router.get('/users/:id/progress', (req: Request, res: Response) => {
 });
 
 // ============================================
-// GET /api/publisher/users/:id/pdf-versions - PDF版履歴
+// GET /api/publisher/users/:id/pdf-versions - PDFバージョン履歴
 // ============================================
 router.get('/users/:id/pdf-versions', (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const db = getDb();
     
     const stmt = db.prepare(`
       SELECT id, version, status, generated_at, pdf_path
@@ -120,6 +117,7 @@ router.put('/users/:id/finalize', (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { pdfVersionId } = req.body;
+    const db = getDb();
     
     if (!pdfVersionId) {
       return res.status(400).json({ error: 'pdfVersionId is required' });
@@ -148,6 +146,8 @@ router.put('/users/:id/finalize', (req: Request, res: Response) => {
 // ============================================
 router.get('/dashboard', (req: Request, res: Response) => {
   try {
+    const db = getDb();
+    
     const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get() as any;
     const activeUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE status = ?').get('active') as any;
     const completedUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE status = ?').get('completed') as any;
