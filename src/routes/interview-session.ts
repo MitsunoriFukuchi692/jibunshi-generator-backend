@@ -37,7 +37,7 @@ const checkAuth = (req: Request, res: Response, next: Function) => {
 const ensureTablesExist = (db: any): void => {
   try {
     db.exec(`
-      CREATE TABLE IF NOT EXISTS interview_session (
+      CREATE TABLE IF NOT EXISTS interview_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL UNIQUE,
         current_question_index INTEGER DEFAULT 0,
@@ -52,10 +52,10 @@ const ensureTablesExist = (db: any): void => {
 
     // ✅ インデックス作成（高速化）
     db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_interview_session_user_id ON interview_session(user_id);
+      CREATE INDEX IF NOT EXISTS idx_interview_sessions_user_id ON interview_sessions(user_id);
     `);
 
-    console.log('✅ interview_session テーブル確認完了');
+    console.log('✅ interview_sessions テーブル確認完了');
   } catch (error) {
     console.error('❌ テーブル初期化エラー:', error);
     throw error;
@@ -100,7 +100,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
 
     // ✅ セッションを保存（UPDATE or INSERT）
     const statement = db.prepare(`
-      INSERT INTO interview_session 
+      INSERT INTO interview_sessions 
       (user_id, current_question_index, conversation, answers_with_photos, timestamp, updated_at)
       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(user_id) DO UPDATE SET
@@ -134,7 +134,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     // ✅ 保存したデータを再度読み込んで確認
     const verifyStmt = db.prepare(`
       SELECT user_id, current_question_index, conversation, answers_with_photos, updated_at
-      FROM interview_session
+      FROM interview_sessions
       WHERE user_id = ?
     `);
 
@@ -199,7 +199,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         answers_with_photos as answersWithPhotos,
         timestamp,
         updated_at as updatedAt
-      FROM interview_session
+      FROM interview_sessions
       WHERE user_id = ?
     `);
 
@@ -261,7 +261,7 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
     // ✅ テーブル存在確認
     ensureTablesExist(db);
 
-    const statement = db.prepare(`DELETE FROM interview_session WHERE user_id = ?`);
+    const statement = db.prepare(`DELETE FROM interview_sessions WHERE user_id = ?`);
     const result = statement.run(userId);
 
     console.log('✅ [Delete] セッション削除完了:', {
@@ -310,7 +310,7 @@ router.post('/update-answers', checkAuth, async (req: Request, res: Response) =>
 
     // ✅ セッションを更新
     const statement = db.prepare(`
-      UPDATE interview_session
+      UPDATE interview_sessions
       SET answers_with_photos = ?, updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ?
     `);
@@ -328,7 +328,7 @@ router.post('/update-answers', checkAuth, async (req: Request, res: Response) =>
     // ✅ 更新したデータを再度読み込んで確認
     const verifyStmt = db.prepare(`
       SELECT answers_with_photos, updated_at
-      FROM interview_session
+      FROM interview_sessions
       WHERE user_id = ?
     `);
 
@@ -383,7 +383,7 @@ router.get('/info', checkAuth, async (req: Request, res: Response) => {
         timestamp,
         created_at,
         updated_at
-      FROM interview_session
+      FROM interview_sessions
       WHERE user_id = ?
     `);
 
