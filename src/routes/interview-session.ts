@@ -84,20 +84,38 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     });
 
     // ✅ 既存データを取得
-    const existing = db.prepare('SELECT timestamp FROM interview_sessions WHERE user_id = ?').get(userId) as any;
+    const existing = db.prepare('SELECT timestamp, current_question_index FROM interview_sessions WHERE user_id = ?').get(userId) as any;
 
-    // ✅ タイムスタンプ比較：新しいデータのみ保存
-    if (existing && existing.timestamp > timestamp) {
-      console.log('⚠️ [Save] 古いデータのため保存をスキップ:', {
-        userId,
-        existingTimestamp: new Date(existing.timestamp).toISOString(),
-        newTimestamp: new Date(timestamp).toISOString()
-      });
-      return res.json({
-        success: false,
-        message: 'Data is older than existing - skipped',
-        reason: 'timestamp_conflict'
-      });
+    // ✅ タイムスタンプ AND currentQuestionIndex で比較：新しいデータのみ保存
+    if (existing) {
+      // ① タイムスタンプで判定
+      if (existing.timestamp > timestamp) {
+        console.log('⚠️ [Save] タイムスタンプが古いため保存をスキップ:', {
+          userId,
+          existingTimestamp: new Date(existing.timestamp).toISOString(),
+          newTimestamp: new Date(timestamp).toISOString()
+        });
+        return res.json({
+          success: false,
+          message: 'Data is older than existing (by timestamp) - skipped',
+          reason: 'timestamp_conflict'
+        });
+      }
+
+      // ② タイムスタンプが同じ場合は currentQuestionIndex で判定
+      if (existing.timestamp === timestamp && existing.current_question_index > currentQuestionIndex) {
+        console.log('⚠️ [Save] 進捗が古いため保存をスキップ:', {
+          userId,
+          existingProgress: existing.current_question_index,
+          newProgress: currentQuestionIndex,
+          sameTimestamp: true
+        });
+        return res.json({
+          success: false,
+          message: 'Progress is older than existing (same timestamp) - skipped',
+          reason: 'progress_conflict'
+        });
+      }
     }
 
     // ✅ 新しいデータなので保存
