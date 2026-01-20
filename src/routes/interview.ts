@@ -1,209 +1,393 @@
+// 📁 server/src/routes/interview-session.ts
+// interview-session のセッション保存・復元を管理するエンドポイント（改善版）
+
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 
 const router = Router();
 
-// ============================================
-// 認証ミドルウェア
-// ============================================
-const authenticate = (req: Request, res: Response, next: Function) => {
+// ✅ 認証チェック（utils/auth の verifyToken を使用）
+const checkAuth = (req: Request, res: Response, next: Function) => {
   const authHeader = req.headers.authorization;
   const token = extractToken(authHeader);
 
   if (!token) {
-    return res.status(401).json({ error: '認証が必要です。トークンが見つかりません。' });
+    return res.status(401).json({
+      error: 'Unauthorized: No token provided',
+      message: 'Authorization header required'
+    });
   }
 
   const decoded = verifyToken(token);
   if (!decoded) {
-    return res.status(401).json({ error: '無効または期限切れのトークンです。' });
+    return res.status(401).json({
+      error: 'Unauthorized: Invalid token',
+      message: 'Token verification failed'
+    });
   }
 
-  (req as any).user = decoded;
+  // userId を request に設定
+  (req as any).userId = decoded.userId;
+  (req as any).token = token;
   next();
 };
 
-// ============================================
-// POST /api/interview/save - インタビュー回答を保存
-// 🔥 重大修正：19問のデータを interviews テーブルに実際に保存
-// ============================================
-router.post('/save', authenticate, (req: Request, res: Response) => {
+// ✅ テーブル初期化関数
+const ensureTablesExist = (db: any): void => {
   try {
-    const user = (req as any).user;
-    const userId = user.userId;
-    const db = getDb();
-    const { age, answersWithPhotos } = req.body;
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS interview_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        current_question_index INTEGER DEFAULT 0,
+        conversation TEXT DEFAULT '[]',
+        answers_with_photos TEXT DEFAULT '[]',
+        timestamp INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
 
-    console.log('💾 [Save] Request received');
-    console.log('👤 user_id:', userId);
-    console.log('📊 answersWithPhotos type:', Array.isArray(answersWithPhotos) ? 'Array' : 'Not Array');
-    console.log('📊 answersWithPhotos count:', answersWithPhotos?.length || 0);
+    // ✅ インデックス作成（高速化）
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_interview_sessions_user_id ON interview_sessions(user_id);
+    `);
 
-    // ユーザー情報取得
-    const userRecord = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-    console.log('👤 User found:', userRecord?.name);
+    console.log('✅ interview_sessions テーブル確認完了');
+  } catch (error) {
+    console.error('❌ テーブル初期化エラー:', error);
+    throw error;
+  }
+};
 
-    if (!userRecord) {
-      console.error('❌ User not found:', userId);
-      return res.status(404).json({ error: 'User not found' });
+// ✅ セッション保存エンドポイント（改善版 - タイムスタンプ競合解決）
+router.post('/save', checkAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { currentQuestionIndex, conversation, answersWithPhotos, timestamp } = req.body;
+
+    if (!userId) {
+      console.error('❌ user_id なし');
+      return res.status(400).json({ error: 'user_id is required' });
     }
 
-    // 🔥 重要修正：19問のデータを interviews テーブルに保存
-    if (!answersWithPhotos || !Array.isArray(answersWithPhotos) || answersWithPhotos.length === 0) {
-      console.warn('⚠️ No answers to save');
-      return res.status(400).json({ 
-        error: 'No answers provided',
-        details: 'answersWithPhotos must be a non-empty array'
+    const db = getDb();
+    ensureTablesExist(db);
+
+    console.log('💾 [Save] セッション保存開始:', {
+      userId,
+      currentQuestionIndex,
+      answersCount: answersWithPhotos?.length || 0,
+      timestamp: new Date(timestamp).toISOString()
+    });
+
+    // ✅ 既存データを取得
+    const existing = db.prepare('SELECT timestamp FROM interview_sessions WHERE user_id = ?').get(userId) as any;
+
+    // ✅ タイムスタンプ比較：新しいデータのみ保存
+    if (existing && existing.timestamp > timestamp) {
+      console.log('⚠️ [Save] 古いデータのため保存をスキップ:', {
+        userId,
+        existingTimestamp: new Date(existing.timestamp).toISOString(),
+        newTimestamp: new Date(timestamp).toISOString()
+      });
+      return res.json({
+        success: false,
+        message: 'Data is older than existing - skipped',
+        reason: 'timestamp_conflict'
       });
     }
 
-    // ✅ 質問リスト（19個）- InterviewPageと同じ
-    const INTERVIEW_QUESTIONS = [
-      "いつ、どこで生まれましたか？",
-      "どんな環境で育ちましたか？",
-      "小・中・高・大の学校名を覚えている範囲で教えてください。",
-      "学生時代で最も印象に残っている先生や出来事は何ですか？",
-      "進路選択の時、どのように決めましたか？",
-      "初めての仕事はどんな仕事でしたか？",
-      "仕事人生でやりがいや、最も大切な経験は何でしたか？",
-      "仕事での失敗や挫折経験、そこから学んだことは？",
-      "家族や友人との思いでについて聞かせてください。",
-      "健康や病気について、人生に大きな影響を与えた出来事はありますか？",
-      "これまでの人生で学んだ大切な教訓は何ですか？",
-      "今、大事にしていることは何ですか？",
-      "趣味や好きなことは何ですか？",
-      "人生で最も幸せを感じた時期はいつですか？",
-      "次の世代（子ども・孫など）に伝えたいメッセージは何ですか？",
-      "家族や友人に伝えたいメッセージはありますか？",
-      "職場や会社に対して伝えたいメッセージはありますか？",
-      "これからの時間の中で、挑戦したいことはありますか？",
-      "いま人生を振り返ってどう感じていますか？",
-    ];
-
-    console.log('💾 開始：19問のインタビューデータを interviews テーブルに保存');
-
-    let savedCount = 0;
-    const insertStmt = db.prepare(`
-      INSERT INTO interviews (user_id, question, answer_text, duration_seconds, is_processed, created_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'))
+    // ✅ 新しいデータなので保存
+    const statement = db.prepare(`
+      INSERT INTO interview_sessions 
+      (user_id, current_question_index, conversation, answers_with_photos, timestamp, updated_at)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        current_question_index = excluded.current_question_index,
+        conversation = excluded.conversation,
+        answers_with_photos = excluded.answers_with_photos,
+        timestamp = excluded.timestamp,
+        updated_at = CURRENT_TIMESTAMP
     `);
 
-    // 各回答を interviews テーブルに保存
-    answersWithPhotos.forEach((answer: any, index: number) => {
-      try {
-        const question = INTERVIEW_QUESTIONS[index] || `質問${index + 1}`;
-        const answerText = answer.text || '';
-        
-        // ✅ 重要な出来事情報を answer_text に含める
-        let fullAnswerText = answerText;
-        if (answer.isImportant && answer.eventTitle) {
-          fullAnswerText += `\n\n【重要な出来事】\nタイトル: ${answer.eventTitle}`;
-          if (answer.eventAge !== undefined) {
-            fullAnswerText += `\n出来事時の年齢: ${answer.eventAge}歳`;
-          }
-          if (answer.year) {
-            fullAnswerText += `\n出来事の年: ${answer.year}`;
-          }
-          if (answer.month) {
-            fullAnswerText += `\n出来事の月: ${answer.month}月`;
-          }
-        }
+    const conversationJson = JSON.stringify(conversation);
+    const answersJson = JSON.stringify(answersWithPhotos);
 
-        const result = insertStmt.run(
-          userId,
-          question,
-          fullAnswerText,
-          null,  // duration_seconds
-          0      // is_processed
-        );
+    statement.run(
+      userId,
+      currentQuestionIndex,
+      conversationJson,
+      answersJson,
+      timestamp
+    );
 
-        console.log(`✅ [${index + 1}/${answersWithPhotos.length}] Question saved - ID: ${result.lastInsertRowid}`);
-        console.log(`   質問: ${question.substring(0, 50)}...`);
-        console.log(`   回答: ${answerText.substring(0, 50)}...`);
-        
-        // ✅ 写真がある場合は保存（オプション）
-        if (answer.photos && Array.isArray(answer.photos) && answer.photos.length > 0) {
-          const photoStmt = db.prepare(`
-            INSERT INTO photos (user_id, file_path, description, uploaded_at)
-            VALUES (?, ?, ?, datetime('now'))
-          `);
+    console.log('✅ [Save] セッション保存完了:', {
+      userId,
+      currentQuestionIndex,
+      answersCount: answersWithPhotos.length,
+      timestamp: new Date(timestamp).toISOString()
+    });
 
-          answer.photos.forEach((photo: any, photoIdx: number) => {
-            try {
-              photoStmt.run(
-                userId,
-                photo.file_path || '',
-                photo.description || `Photo ${photoIdx + 1} for Q${index + 1}`,
-              );
-              console.log(`   📸 Photo ${photoIdx + 1} saved`);
-            } catch (photoError: any) {
-              console.warn(`   ⚠️ Photo save failed: ${photoError.message}`);
-            }
-          });
-        }
-
-        savedCount++;
-      } catch (insertError: any) {
-        console.error(`❌ Failed to save question ${index + 1}:`, insertError.message);
+    res.json({
+      success: true,
+      message: 'Session saved successfully',
+      data: {
+        user_id: userId,
+        currentQuestionIndex,
+        answersCount: answersWithPhotos.length,
+        savedAt: new Date().toISOString()
       }
     });
 
-    console.log(`✅ インタビューデータ保存完了: ${savedCount}/${answersWithPhotos.length}件保存`);
-
-    // ✅ インタビュー保存完了
-    console.log('✅ Interview save completed successfully');
-    res.json({
-      success: true,
-      message: `Interview answers saved successfully (${savedCount}/${answersWithPhotos.length} saved). Ready for AI generation.`,
-      userId: userId,
-      savedCount: savedCount,
-      totalCount: answersWithPhotos.length
-    });
-
-  } catch (error: any) {
-    console.error('❌ Error in POST /api/interview/save:', error);
-    console.error('❌ Error details:', error.message);
-    console.error('❌ Error stack:', error.stack);
+  } catch (error) {
+    console.error('❌ [Error] セッション保存エラー:', error);
     res.status(500).json({
-      error: 'Failed to save interview',
-      details: error.message
+      error: 'Failed to save session',
+      details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
 
-// ============================================
-// GET /api/interview/questions - インタビュー質問一覧取得
-// ============================================
-router.get('/questions', (req: Request, res: Response) => {
+// ✅ セッション復元エンドポイント
+router.get('/load', checkAuth, async (req: Request, res: Response) => {
   try {
-    const INTERVIEW_QUESTIONS = [
-      { id: 1, question: 'お名前を教えてください。' },
-      { id: 2, question: 'おいくつですか？' },
-      { id: 3, question: '今、どこにお住まいですか？' },
-      { id: 4, question: 'ご家族について教えてください。' },
-      { id: 5, question: '子どもの頃の思い出を教えてください。' },
-      { id: 6, question: '学生時代はどのように過ごしましたか？' },
-      { id: 7, question: 'どのような仕事をされていましたか？' },
-      { id: 8, question: 'これまでの人生で最も大切な出来事は何ですか？' },
-      { id: 9, question: 'どのような趣味や好きなことがありますか？' },
-      { id: 10, question: '旅行の思い出や行きたい場所はありますか？' },
-      { id: 11, question: 'これまでの人生で学んだ大切なことは何ですか？' },
-      { id: 12, question: '人生で後悔していることはありますか？' },
-      { id: 13, question: '誇りに思っていることは何ですか？' },
-      { id: 14, question: 'ご友人との関係について教えてください。' },
-      { id: 15, question: '人生で最も幸せを感じた時期はいつですか？' },
-      { id: 16, question: '今、大切にしていることは何ですか？' },
-      { id: 17, question: '将来やってみたいことはありますか？' },
-      { id: 18, question: 'ご家族や友人に伝えたいことはありますか？' },
-      { id: 19, question: '最後に、自分の人生について一言お願いします。' }
-    ];
+    const userId = (req as any).userId;
 
-    console.log('📖 Question list request - total:', INTERVIEW_QUESTIONS.length);
-    res.json(INTERVIEW_QUESTIONS);
-  } catch (error: any) {
-    console.error('❌ Error:', error);
-    res.status(500).json({ error: error.message });
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id not found in token' });
+    }
+
+    const db = getDb();
+
+    // ✅ テーブル存在確認
+    ensureTablesExist(db);
+
+    console.log('📖 [Load] セッション復元開始:', { userId });
+
+    const statement = db.prepare(`
+      SELECT 
+        current_question_index as currentQuestionIndex,
+        conversation,
+        answers_with_photos as answersWithPhotos,
+        timestamp,
+        updated_at as updatedAt
+      FROM interview_sessions
+      WHERE user_id = ?
+    `);
+
+    const session = statement.get(userId) as any;
+
+    if (!session) {
+      console.log('ℹ️ [Load] セッションなし:', { userId });
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // JSON文字列をパース
+    try {
+      const parsedSession = {
+        currentQuestionIndex: session.currentQuestionIndex,
+        conversation: JSON.parse(session.conversation),
+        answersWithPhotos: JSON.parse(session.answersWithPhotos),
+        timestamp: session.timestamp,
+        updatedAt: session.updatedAt
+      };
+
+      // ✅ データ整合性チェック
+      console.log('✅ [Load] セッション復元成功:', {
+        userId,
+        currentQuestionIndex: parsedSession.currentQuestionIndex,
+        conversationLength: parsedSession.conversation.length,
+        answersCount: parsedSession.answersWithPhotos.length,
+        updatedAt: parsedSession.updatedAt,
+        age: Math.floor((Date.now() - session.timestamp) / 1000) + 's'
+      });
+
+      res.json(parsedSession);
+    } catch (parseError) {
+      console.error('❌ [Parse] JSONパースエラー:', parseError);
+      return res.status(500).json({
+        error: 'Failed to parse session data',
+        details: parseError instanceof Error ? parseError.message : 'Unknown error'
+      });
+    }
+  } catch (error) {
+    console.error('❌ [Error] セッション復元エラー:', error);
+    res.status(500).json({
+      error: 'Failed to load session',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ✅ セッション削除エンドポイント
+router.delete('/', checkAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id not found in token' });
+    }
+
+    const db = getDb();
+
+    // ✅ テーブル存在確認
+    ensureTablesExist(db);
+
+    const statement = db.prepare(`DELETE FROM interview_sessions WHERE user_id = ?`);
+    const result = statement.run(userId);
+
+    console.log('✅ [Delete] セッション削除完了:', {
+      userId,
+      deletedRows: (result as any).changes || 0
+    });
+
+    res.json({
+      success: true,
+      message: 'Session deleted successfully',
+      deletedRows: (result as any).changes || 0
+    });
+  } catch (error) {
+    console.error('❌ [Error] セッション削除エラー:', error);
+    res.status(500).json({
+      error: 'Failed to delete session',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ✅ 修正された回答を更新（新エンドポイント）
+router.post('/update-answers', checkAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { answersWithPhotos } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    if (!Array.isArray(answersWithPhotos)) {
+      return res.status(400).json({ error: 'answersWithPhotos must be an array' });
+    }
+
+    const db = getDb();
+
+    // ✅ テーブル存在確認
+    ensureTablesExist(db);
+
+    console.log('💾 [UpdateAnswers] 回答更新開始:', {
+      userId,
+      answersCount: answersWithPhotos.length,
+      timestamp: new Date().toISOString()
+    });
+
+    // ✅ セッションを更新
+    const statement = db.prepare(`
+      UPDATE interview_sessions
+      SET answers_with_photos = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `);
+
+    const answersJson = JSON.stringify(answersWithPhotos);
+    const result = statement.run(answersJson, userId);
+
+    // ✅ 更新結果の検証
+    console.log('✅ [UpdateAnswers] 回答更新完了:', {
+      userId,
+      rowsChanged: (result as any).changes || 0,
+      answersCount: answersWithPhotos.length
+    });
+
+    // ✅ 更新したデータを再度読み込んで確認
+    const verifyStmt = db.prepare(`
+      SELECT answers_with_photos, updated_at
+      FROM interview_sessions
+      WHERE user_id = ?
+    `);
+
+    const updated = verifyStmt.get(userId) as any;
+
+    if (updated) {
+      const savedAnswers = JSON.parse(updated.answers_with_photos);
+      console.log('✅ [Verify] 更新データ確認成功:', {
+        userId,
+        answersCount: savedAnswers.length,
+        updatedAt: updated.updated_at
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Answers updated successfully',
+      user_id: userId,
+      updatedAt: new Date().toISOString(),
+      answersCount: answersWithPhotos.length
+    });
+  } catch (error) {
+    console.error('❌ [Error] 回答更新エラー:', error);
+    res.status(500).json({
+      error: 'Failed to update answers',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ✅ セッション情報取得（デバッグ用）
+router.get('/info', checkAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'user_id not found in token' });
+    }
+
+    const db = getDb();
+
+    // ✅ テーブル存在確認
+    ensureTablesExist(db);
+
+    const statement = db.prepare(`
+      SELECT 
+        id,
+        user_id,
+        current_question_index,
+        length(conversation) as conversation_size,
+        length(answers_with_photos) as answers_size,
+        timestamp,
+        created_at,
+        updated_at
+      FROM interview_sessions
+      WHERE user_id = ?
+    `);
+
+    const session = statement.get(userId) as any;
+
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        sessionId: session.id,
+        userId: session.user_id,
+        currentQuestionIndex: session.current_question_index,
+        conversationSize: session.conversation_size + ' bytes',
+        answersSize: session.answers_size + ' bytes',
+        timestamp: new Date(session.timestamp).toISOString(),
+        createdAt: session.created_at,
+        updatedAt: session.updated_at,
+        age: Math.floor((Date.now() - session.timestamp) / 1000) + 's'
+      }
+    });
+  } catch (error) {
+    console.error('❌ [Error] セッション情報取得エラー:', error);
+    res.status(500).json({
+      error: 'Failed to get session info',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 

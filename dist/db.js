@@ -175,6 +175,7 @@ export function initDb() {
       current_question_index INTEGER NOT NULL DEFAULT 0,
       conversation TEXT NOT NULL DEFAULT '[]',
       answers_with_photos TEXT NOT NULL DEFAULT '[]',
+      timestamp INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

@@ -53,7 +53,7 @@ const ensureTablesExist = (db) => {
         throw error;
     }
 };
-// ✅ セッション保存エンドポイント（改善版）
+// ✅ セッション保存エンドポイント（改善版 - タイムスタンプ競合解決）
 router.post('/save', checkAuth, async (req, res) => {
     try {
         const userId = req.userId;
@@ -63,26 +63,46 @@ router.post('/save', checkAuth, async (req, res) => {
             return res.status(400).json({ error: 'user_id is required' });
         }
         const db = getDb();
-        // ✅ テーブル存在確認
         ensureTablesExist(db);
-        // ✅ 詳細なログ出力
         console.log('💾 [Save] セッション保存開始:', {
             userId,
             currentQuestionIndex,
-            conversationLength: conversation?.length || 0,
             answersCount: answersWithPhotos?.length || 0,
             timestamp: new Date(timestamp).toISOString()
         });
-        // ✅ 保存する数据の検証
-        if (!Array.isArray(conversation)) {
-            console.error('❌ conversation は配列である必要があります:', typeof conversation);
-            return res.status(400).json({ error: 'conversation must be an array' });
+        // ✅ 既存データを取得
+        const existing = db.prepare('SELECT timestamp, current_question_index FROM interview_sessions WHERE user_id = ?').get(userId);
+        // ✅ タイムスタンプ AND currentQuestionIndex で比較：新しいデータのみ保存
+        if (existing) {
+            // ① タイムスタンプで判定
+            if (existing.timestamp > timestamp) {
+                console.log('⚠️ [Save] タイムスタンプが古いため保存をスキップ:', {
+                    userId,
+                    existingTimestamp: new Date(existing.timestamp).toISOString(),
+                    newTimestamp: new Date(timestamp).toISOString()
+                });
+                return res.json({
+                    success: false,
+                    message: 'Data is older than existing (by timestamp) - skipped',
+                    reason: 'timestamp_conflict'
+                });
+            }
+            // ② タイムスタンプが同じ場合は currentQuestionIndex で判定
+            if (existing.timestamp === timestamp && existing.current_question_index > currentQuestionIndex) {
+                console.log('⚠️ [Save] 進捗が古いため保存をスキップ:', {
+                    userId,
+                    existingProgress: existing.current_question_index,
+                    newProgress: currentQuestionIndex,
+                    sameTimestamp: true
+                });
+                return res.json({
+                    success: false,
+                    message: 'Progress is older than existing (same timestamp) - skipped',
+                    reason: 'progress_conflict'
+                });
+            }
         }
-        if (!Array.isArray(answersWithPhotos)) {
-            console.error('❌ answersWithPhotos は配列である必要があります:', typeof answersWithPhotos);
-            return res.status(400).json({ error: 'answersWithPhotos must be an array' });
-        }
-        // ✅ セッションを保存（UPDATE or INSERT）
+        // ✅ 新しいデータなので保存
         const statement = db.prepare(`
       INSERT INTO interview_sessions 
       (user_id, current_question_index, conversation, answers_with_photos, timestamp, updated_at)
@@ -96,34 +116,13 @@ router.post('/save', checkAuth, async (req, res) => {
     `);
         const conversationJson = JSON.stringify(conversation);
         const answersJson = JSON.stringify(answersWithPhotos);
-        const result = statement.run(userId, currentQuestionIndex, conversationJson, answersJson, timestamp);
-        // ✅ 保存結果の検証
+        statement.run(userId, currentQuestionIndex, conversationJson, answersJson, timestamp);
         console.log('✅ [Save] セッション保存完了:', {
             userId,
-            rowsChanged: result.changes || 0,
             currentQuestionIndex,
             answersCount: answersWithPhotos.length,
             timestamp: new Date(timestamp).toISOString()
         });
-        // ✅ 保存したデータを再度読み込んで確認
-        const verifyStmt = db.prepare(`
-      SELECT user_id, current_question_index, conversation, answers_with_photos, updated_at
-      FROM interview_sessions
-      WHERE user_id = ?
-    `);
-        const saved = verifyStmt.get(userId);
-        if (saved) {
-            console.log('✅ [Verify] 保存データ確認成功:', {
-                userId: saved.user_id,
-                currentQuestionIndex: saved.current_question_index,
-                conversationLength: JSON.parse(saved.conversation).length,
-                answersCount: JSON.parse(saved.answers_with_photos).length,
-                updatedAt: saved.updated_at
-            });
-        }
-        else {
-            console.error('❌ [Verify] 保存したデータが見つかりません');
-        }
         res.json({
             success: true,
             message: 'Session saved successfully',
@@ -136,10 +135,7 @@ router.post('/save', checkAuth, async (req, res) => {
         });
     }
     catch (error) {
-        console.error('❌ [Error] セッション保存エラー:', {
-            error: error instanceof Error ? error.message : 'Unknown error',
-            stack: error instanceof Error ? error.stack : 'No stack'
-        });
+        console.error('❌ [Error] セッション保存エラー:', error);
         res.status(500).json({
             error: 'Failed to save session',
             details: error instanceof Error ? error.message : 'Unknown error'
@@ -153,6 +149,10 @@ router.get('/load', checkAuth, async (req, res) => {
         if (!userId) {
             return res.status(400).json({ error: 'user_id not found in token' });
         }
+        // ✅ キャッシュ無効化ヘッダーを設定（常に最新データを返す）
+        res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.set("Pragma", "no-cache");
+        res.set("Expires", "0");
         const db = getDb();
         // ✅ テーブル存在確認
         ensureTablesExist(db);
