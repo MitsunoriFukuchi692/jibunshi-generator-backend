@@ -242,7 +242,7 @@ router.delete('/', checkAuth, async (req, res) => {
 router.post('/update-answers', checkAuth, async (req, res) => {
     try {
         const userId = req.userId;
-        const { answersWithPhotos } = req.body;
+        const { answersWithPhotos, timestamp } = req.body;
         if (!userId) {
             return res.status(400).json({ error: 'user_id is required' });
         }
@@ -255,16 +255,17 @@ router.post('/update-answers', checkAuth, async (req, res) => {
         console.log('💾 [UpdateAnswers] 回答更新開始:', {
             userId,
             answersCount: answersWithPhotos.length,
-            timestamp: new Date().toISOString()
+            timestamp: new Date(timestamp || Date.now()).toISOString()
         });
         // ✅ セッションを更新
         const statement = db.prepare(`
       UPDATE interview_sessions
-      SET answers_with_photos = ?, updated_at = CURRENT_TIMESTAMP
+      SET answers_with_photos = ?, timestamp = ?, updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ?
     `);
         const answersJson = JSON.stringify(answersWithPhotos);
-        const result = statement.run(answersJson, userId);
+        const updateTimestamp = timestamp || Date.now();
+        const result = statement.run(answersJson, updateTimestamp, userId);
         // ✅ 更新結果の検証
         console.log('✅ [UpdateAnswers] 回答更新完了:', {
             userId,
