@@ -42,16 +42,17 @@ router.post('/', authenticate, (req: Request, res: Response) => {
 
     // バリデーション
     if (!edited_content) {
+      console.error('❌ edited_content is empty!');
       return res.status(400).json({ error: 'edited_content is required' });
     }
 
     // 既存の biography を確認
     const existing = db.prepare('SELECT id FROM biography WHERE user_id = ?').get(userId) as any;
+    console.log('🔍 Existing biography:', existing);  // ← ここに追加
 
     let result;
 
     if (existing) {
-      // 更新
       console.log('📝 Updating existing biography - id:', existing.id);
       const updateStmt = db.prepare(`
         UPDATE biography
@@ -61,19 +62,18 @@ router.post('/', authenticate, (req: Request, res: Response) => {
       updateStmt.run(edited_content, ai_summary || edited_content, userId);
       result = { lastInsertRowid: existing.id };
     } else {
-      // 新規作成
       console.log('✨ Creating new biography');
       const insertStmt = db.prepare(`
         INSERT INTO biography (user_id, edited_content, ai_summary, created_at, updated_at)
         VALUES (?, ?, ?, datetime('now'), datetime('now'))
       `);
       result = insertStmt.run(userId, edited_content, ai_summary || edited_content);
+      console.log('📊 Insert result:', result);  // ← ここに追加
     }
 
-    // 保存されたデータを取得して返す
     const savedBiography = db.prepare('SELECT * FROM biography WHERE id = ?').get(result.lastInsertRowid);
+    console.log('✅ Saved biography:', savedBiography);  // ← ここに追加
 
-    console.log('✅ Biography saved successfully - id:', result.lastInsertRowid);
     res.status(201).json({
       success: true,
       message: existing ? 'Biography updated successfully' : 'Biography created successfully',
