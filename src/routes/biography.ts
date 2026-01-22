@@ -215,4 +215,32 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
   }
 });
 
+// ============================================
+// ⚠️ デバッグ用：全biography を取得（本番確認用）
+// ============================================
+router.get('/debug/all', (req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const biographies = db.prepare(`
+      SELECT 
+        id, 
+        user_id, 
+        LENGTH(edited_content) as edited_content_length,
+        LENGTH(ai_summary) as ai_summary_length,
+        SUBSTR(edited_content, 1, 300) as edited_content_preview,
+        updated_at 
+      FROM biography
+    `).all();
+
+    console.log('📊 All biographies:', biographies);
+    res.json({
+      count: biographies.length,
+      data: biographies
+    });
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
