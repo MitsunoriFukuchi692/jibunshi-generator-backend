@@ -98,12 +98,16 @@ router.get('/', authenticate, (req: Request, res: Response) => {
     const userId = user.userId;
     const db = getDb();
 
-    console.log('📖 Biography fetch request - userId:', userId);
+    console.log('📖 Biography fetch request - userId:', userId);  // ← ログ追加
+    console.log('🔍 User object:', user);  // ← ユーザー確認用
 
     const biography = db.prepare('SELECT * FROM biography WHERE user_id = ?').get(userId) as any;
 
     if (!biography) {
       console.warn('⚠️ Biography not found - userId:', userId);
+      // ← データが本当にないか確認
+      const allBiographies = db.prepare('SELECT id, user_id FROM biography').all();
+      console.warn('📊 All biographies in DB:', allBiographies);
       return res.status(404).json({ error: 'Biography not found' });
     }
 
@@ -112,7 +116,6 @@ router.get('/', authenticate, (req: Request, res: Response) => {
       success: true,
       data: biography
     });
-
   } catch (error: any) {
     console.error('❌ Error in GET /api/biography:', error);
     res.status(500).json({
@@ -121,7 +124,6 @@ router.get('/', authenticate, (req: Request, res: Response) => {
     });
   }
 });
-
 // ============================================
 // PUT /api/biography/:id - biography を更新
 // ============================================
