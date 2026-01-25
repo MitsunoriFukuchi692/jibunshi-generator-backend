@@ -34,13 +34,14 @@ router.post('/', authenticate, (req, res) => {
         });
         // バリデーション
         if (!edited_content) {
+            console.error('❌ edited_content is empty!');
             return res.status(400).json({ error: 'edited_content is required' });
         }
         // 既存の biography を確認
         const existing = db.prepare('SELECT id FROM biography WHERE user_id = ?').get(userId);
+        console.log('🔍 Existing biography:', existing); // ← ここに追加
         let result;
         if (existing) {
-            // 更新
             console.log('📝 Updating existing biography - id:', existing.id);
             const updateStmt = db.prepare(`
         UPDATE biography
@@ -51,17 +52,16 @@ router.post('/', authenticate, (req, res) => {
             result = { lastInsertRowid: existing.id };
         }
         else {
-            // 新規作成
             console.log('✨ Creating new biography');
             const insertStmt = db.prepare(`
         INSERT INTO biography (user_id, edited_content, ai_summary, created_at, updated_at)
         VALUES (?, ?, ?, datetime('now'), datetime('now'))
       `);
             result = insertStmt.run(userId, edited_content, ai_summary || edited_content);
+            console.log('📊 Insert result:', result); // ← ここに追加
         }
-        // 保存されたデータを取得して返す
         const savedBiography = db.prepare('SELECT * FROM biography WHERE id = ?').get(result.lastInsertRowid);
-        console.log('✅ Biography saved successfully - id:', result.lastInsertRowid);
+        console.log('✅ Saved biography:', savedBiography); // ← ここに追加
         res.status(201).json({
             success: true,
             message: existing ? 'Biography updated successfully' : 'Biography created successfully',
@@ -84,10 +84,14 @@ router.get('/', authenticate, (req, res) => {
         const user = req.user;
         const userId = user.userId;
         const db = getDb();
-        console.log('📖 Biography fetch request - userId:', userId);
+        console.log('📖 Biography fetch request - userId:', userId); // ← ログ追加
+        console.log('🔍 User object:', user); // ← ユーザー確認用
         const biography = db.prepare('SELECT * FROM biography WHERE user_id = ?').get(userId);
         if (!biography) {
             console.warn('⚠️ Biography not found - userId:', userId);
+            // ← データが本当にないか確認
+            const allBiographies = db.prepare('SELECT id, user_id FROM biography').all();
+            console.warn('📊 All biographies in DB:', allBiographies);
             return res.status(404).json({ error: 'Biography not found' });
         }
         console.log('✅ Biography fetched - id:', biography.id);
@@ -181,6 +185,33 @@ router.delete('/:id', authenticate, (req, res) => {
             error: 'Failed to delete biography',
             details: error.message
         });
+    }
+});
+// ============================================
+// ⚠️ デバッグ用：全biography を取得（本番確認用）
+// ============================================
+router.get('/debug/all', (req, res) => {
+    try {
+        const db = getDb();
+        const biographies = db.prepare(`
+      SELECT 
+        id, 
+        user_id, 
+        LENGTH(edited_content) as edited_content_length,
+        LENGTH(ai_summary) as ai_summary_length,
+        SUBSTR(edited_content, 1, 300) as edited_content_preview,
+        updated_at 
+      FROM biography
+    `).all();
+        console.log('📊 All biographies:', biographies);
+        res.json({
+            count: biographies.length,
+            data: biographies
+        });
+    }
+    catch (error) {
+        console.error('❌ Error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 export default router;

@@ -1,4 +1,4 @@
-// 📁 server/src/routes/interview-session.ts
+// 📁 server/src/routes/interview.ts
 // interview-session のセッション保存・復元を管理するエンドポイント（改善版）
 
 import { Router, Request, Response } from 'express';
@@ -386,6 +386,221 @@ router.get('/info', checkAuth, async (req: Request, res: Response) => {
     console.error('❌ [Error] セッション情報取得エラー:', error);
     res.status(500).json({
       error: 'Failed to get session info',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ============================================
+// ✅ 【新規追加】POST /api/interview/save-all - 全データ一括保存
+// ============================================
+// CorrectionPageV2 からの統合エンドポイント
+// 回答 + 出来事 + 修正テキスト + 写真を一括で保存
+router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const {
+      answers,           // Answer[] - 修正済みの回答
+      event_info,       // EventInfo - 出来事情報
+      corrected_text,   // string - AI修正済みテキスト
+      photo_paths,      // string[] - アップロード済み写真パス
+      timestamp
+    } = req.body;
+
+    if (!userId) {
+      console.error('❌ user_id なし');
+      return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    const db = getDb();
+
+    console.log('💾 [save-all] 全データ一括保存開始:', {
+      userId,
+      answersCount: answers?.length || 0,
+      eventTitle: event_info?.title,
+      eventYear: event_info?.year,
+      hasCorrectedText: !!corrected_text,
+      photoCount: photo_paths?.length || 0,
+      timestamp: new Date(timestamp).toISOString()
+    });
+
+    // ============================================
+    // ステップ1：ユーザーの生年情報を取得
+    // ============================================
+    const userRecord = db.prepare('SELECT birth_year FROM users WHERE id = ?').get(userId) as any;
+    
+    if (!userRecord) {
+      console.error('❌ ユーザーが見つかりません:', userId);
+      return res.status(400).json({ error: 'User not found' });
+    }
+
+    let eventYear: number | null = null;
+    let eventAge: number | null = null;
+
+    // event_info から年齢 or 西暦年を計算
+    if (event_info?.year) {
+      eventYear = event_info.year;
+      
+      if (eventYear && userRecord.birth_year) {
+        eventAge = eventYear - userRecord.birth_year;
+        console.log('✅ Event年を指定:', {
+          eventYear,
+          birthYear: userRecord.birth_year,
+          calculatedAge: eventAge
+        });
+      }
+    }
+
+    // ============================================
+    // ステップ2：修正テキストから出来事説明を生成
+    // ============================================
+    const eventDescription = corrected_text || answers
+      ?.map((a: any) => `Q: ${a.question}\nA: ${a.answer}`)
+      .join('\n\n') || '';
+
+    console.log('📝 出来事説明を生成:', {
+      length: eventDescription.length,
+      hasEditedContent: !!corrected_text
+    });
+
+    // ============================================
+    // ステップ3：timeline テーブルに保存
+    // ============================================
+    const timelineStmt = db.prepare(`
+      INSERT INTO timeline (
+        user_id,
+        age,
+        year,
+        month,
+        event_title,
+        event_description,
+        edited_content,
+        ai_corrected_text,
+        stage,
+        is_auto_generated,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `);
+
+    const timelineResult = timelineStmt.run(
+      userId,
+      eventAge || null,           // age
+      eventYear || null,          // year
+      event_info?.month || null,  // month
+      event_info?.title || '（タイトル未設定）',  // event_title
+      eventDescription || null,   // event_description
+      corrected_text || null,     // edited_content（修正済みテキスト）
+      corrected_text || null,     // ai_corrected_text
+      'interview',                // stage
+      0,                          // is_auto_generated（ユーザー手動編集）
+    );
+
+    const timelineId = timelineResult.lastInsertRowid;
+    console.log('✅ Timeline 保存完了:', {
+      timelineId,
+      eventTitle: event_info?.title,
+      eventYear
+    });
+
+    // ============================================
+    // ステップ4：写真を timeline_photos に紐付ける
+    // ============================================
+    let linkedPhotoCount = 0;
+
+    if (photo_paths && Array.isArray(photo_paths) && photo_paths.length > 0) {
+      const photoStmt = db.prepare(`
+        INSERT INTO timeline_photos (
+          timeline_id,
+          file_path,
+          description,
+          display_order,
+          created_at
+        ) VALUES (?, ?, ?, ?, datetime('now'))
+      `);
+
+      for (let idx = 0; idx < photo_paths.length; idx++) {
+        const photoPath = photo_paths[idx];
+        
+        console.log('📸 写真を紐付け中:', {
+          timelineId,
+          photoPath,
+          order: idx
+        });
+
+        photoStmt.run(
+          timelineId,
+          photoPath,
+          `出来事「${event_info?.title || 'タイトル未設定'}」の写真 #${idx + 1}`,
+          idx
+        );
+        linkedPhotoCount++;
+      }
+
+      console.log('✅ 写真を紐付け完了:', {
+        timelineId,
+        photoCount: linkedPhotoCount
+      });
+    }
+
+    // ============================================
+    // ステップ5：interview_sessions も更新
+    // ============================================
+    try {
+      const updateSessionStmt = db.prepare(`
+        UPDATE interview_sessions
+        SET 
+          answers_with_photos = ?,
+          timestamp = ?,
+          updated_at = datetime('now')
+        WHERE user_id = ?
+      `);
+
+      // answersWithPhotos 形式に変換
+      const answersWithPhotos = answers?.map((a: any, idx: number) => ({
+        question: a.question,
+        answer: a.answer,
+        photos: a.photos || []
+      })) || [];
+
+      updateSessionStmt.run(
+        JSON.stringify(answersWithPhotos),
+        timestamp || Date.now(),
+        userId
+      );
+
+      console.log('✅ Interview session を更新:', {
+        userId,
+        answersCount: answersWithPhotos.length
+      });
+    } catch (sessionError: any) {
+      console.warn('⚠️ Interview session 更新に失敗（無視）:', sessionError.message);
+    }
+
+    // ============================================
+    // ステップ6：レスポンス返却
+    // ============================================
+    console.log('✅ save-all 完了！');
+
+    res.status(201).json({
+      success: true,
+      message: '全データが保存されました',
+      data: {
+        timelineId,
+        userId,
+        eventTitle: event_info?.title,
+        eventYear,
+        answersCount: answers?.length || 0,
+        photoCount: linkedPhotoCount,
+        correctedTextLength: corrected_text?.length || 0,
+        savedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error: any) {
+    console.error('❌ save-all エラー:', error);
+    res.status(500).json({
+      error: 'Failed to save data',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
