@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node dist/index.js",
+    "dev": "tsx --watch src/index.ts",
     "build": "tsc",
     "kill-port": "taskkill /F /IM node.exe"
   },
