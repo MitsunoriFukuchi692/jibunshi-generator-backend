@@ -454,9 +454,8 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     // ============================================
     // ステップ2：修正テキストから出来事説明を生成
     // ============================================
-    const eventDescription = corrected_text || answers
-      ?.map((a: any) => `Q: ${a.question}\nA: ${a.answer}`)
-      .join('\n\n') || '';
+    const eventDescription = corrected_text || 
+      `${event_info?.title || '（タイトル未設定）'}についての出来事`;
 
     console.log('📝 出来事説明を生成:', {
       length: eventDescription.length,
