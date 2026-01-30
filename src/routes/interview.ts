@@ -1,5 +1,6 @@
 // 📁 server/src/routes/interview.ts
 // interview-session のセッション保存・復元を管理するエンドポイント（改善版）
+// 進行中データ編集対応版
 
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
@@ -43,6 +44,10 @@ const ensureTablesExist = (db: any): void => {
         current_question_index INTEGER DEFAULT 0,
         conversation TEXT DEFAULT '[]',
         answers_with_photos TEXT DEFAULT '[]',
+        event_title TEXT,
+        event_year INTEGER,
+        event_month INTEGER,
+        event_description TEXT,
         timestamp INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -66,7 +71,16 @@ const ensureTablesExist = (db: any): void => {
 router.post('/save', checkAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
-    const { currentQuestionIndex, conversation, answersWithPhotos, timestamp } = req.body;
+    const { 
+      currentQuestionIndex, 
+      conversation, 
+      answersWithPhotos, 
+      timestamp,
+      eventTitle,
+      eventYear,
+      eventMonth,
+      eventDescription
+    } = req.body;
 
     if (!userId) {
       console.error('❌ user_id なし');
@@ -80,6 +94,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       userId,
       currentQuestionIndex,
       answersCount: answersWithPhotos?.length || 0,
+      eventTitle,
       timestamp: new Date(timestamp).toISOString()
     });
 
@@ -103,12 +118,16 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     // ✅ 新しいデータなので保存
     const statement = db.prepare(`
       INSERT INTO interview_sessions 
-      (user_id, current_question_index, conversation, answers_with_photos, timestamp, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(user_id) DO UPDATE SET
         current_question_index = excluded.current_question_index,
         conversation = excluded.conversation,
         answers_with_photos = excluded.answers_with_photos,
+        event_title = excluded.event_title,
+        event_year = excluded.event_year,
+        event_month = excluded.event_month,
+        event_description = excluded.event_description,
         timestamp = excluded.timestamp,
         updated_at = CURRENT_TIMESTAMP
     `);
@@ -121,6 +140,10 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       currentQuestionIndex,
       conversationJson,
       answersJson,
+      eventTitle || null,
+      eventYear || null,
+      eventMonth || null,
+      eventDescription || null,
       timestamp
     );
 
@@ -128,6 +151,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       userId,
       currentQuestionIndex,
       answersCount: answersWithPhotos.length,
+      eventTitle,
       timestamp: new Date(timestamp).toISOString()
     });
 
@@ -138,6 +162,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
         user_id: userId,
         currentQuestionIndex,
         answersCount: answersWithPhotos.length,
+        eventTitle,
         savedAt: new Date().toISOString()
       }
     });
@@ -172,6 +197,10 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         current_question_index as currentQuestionIndex,
         conversation,
         answers_with_photos as answersWithPhotos,
+        event_title as eventTitle,
+        event_year as eventYear,
+        event_month as eventMonth,
+        event_description as eventDescription,
         timestamp,
         updated_at as updatedAt
       FROM interview_sessions
@@ -191,6 +220,10 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         currentQuestionIndex: session.currentQuestionIndex,
         conversation: JSON.parse(session.conversation),
         answersWithPhotos: JSON.parse(session.answersWithPhotos),
+        eventTitle: session.eventTitle,
+        eventYear: session.eventYear,
+        eventMonth: session.eventMonth,
+        eventDescription: session.eventDescription,
         timestamp: session.timestamp,
         updatedAt: session.updatedAt
       };
@@ -201,6 +234,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         currentQuestionIndex: parsedSession.currentQuestionIndex,
         conversationLength: parsedSession.conversation.length,
         answersCount: parsedSession.answersWithPhotos.length,
+        eventTitle: parsedSession.eventTitle,
         updatedAt: parsedSession.updatedAt,
         age: Math.floor((Date.now() - session.timestamp) / 1000) + 's'
       });
@@ -258,83 +292,7 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
   }
 });
 
-// ✅ 修正された回答を更新（新エンドポイント）
-router.post('/update-answers', checkAuth, async (req: Request, res: Response) => {
-  try {
-    const userId = (req as any).userId;
-    const { answersWithPhotos } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({ error: 'user_id is required' });
-    }
-
-    if (!Array.isArray(answersWithPhotos)) {
-      return res.status(400).json({ error: 'answersWithPhotos must be an array' });
-    }
-
-    const db = getDb();
-
-    // ✅ テーブル存在確認
-    ensureTablesExist(db);
-
-    console.log('💾 [UpdateAnswers] 回答更新開始:', {
-      userId,
-      answersCount: answersWithPhotos.length,
-      timestamp: new Date().toISOString()
-    });
-
-    // ✅ セッションを更新
-    const statement = db.prepare(`
-      UPDATE interview_sessions
-      SET answers_with_photos = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `);
-
-    const answersJson = JSON.stringify(answersWithPhotos);
-    const result = statement.run(answersJson, userId);
-
-    // ✅ 更新結果の検証
-    console.log('✅ [UpdateAnswers] 回答更新完了:', {
-      userId,
-      rowsChanged: (result as any).changes || 0,
-      answersCount: answersWithPhotos.length
-    });
-
-    // ✅ 更新したデータを再度読み込んで確認
-    const verifyStmt = db.prepare(`
-      SELECT answers_with_photos, updated_at
-      FROM interview_sessions
-      WHERE user_id = ?
-    `);
-
-    const updated = verifyStmt.get(userId) as any;
-
-    if (updated) {
-      const savedAnswers = JSON.parse(updated.answers_with_photos);
-      console.log('✅ [Verify] 更新データ確認成功:', {
-        userId,
-        answersCount: savedAnswers.length,
-        updatedAt: updated.updated_at
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Answers updated successfully',
-      user_id: userId,
-      updatedAt: new Date().toISOString(),
-      answersCount: answersWithPhotos.length
-    });
-  } catch (error) {
-    console.error('❌ [Error] 回答更新エラー:', error);
-    res.status(500).json({
-      error: 'Failed to update answers',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
-
-// ✅ セッション情報取得（デバッグ用）
+// ✅ セッション情報取得エンドポイント
 router.get('/info', checkAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
@@ -355,6 +313,9 @@ router.get('/info', checkAuth, async (req: Request, res: Response) => {
         current_question_index,
         length(conversation) as conversation_size,
         length(answers_with_photos) as answers_size,
+        event_title,
+        event_year,
+        event_month,
         timestamp,
         created_at,
         updated_at
@@ -376,6 +337,9 @@ router.get('/info', checkAuth, async (req: Request, res: Response) => {
         currentQuestionIndex: session.current_question_index,
         conversationSize: session.conversation_size + ' bytes',
         answersSize: session.answers_size + ' bytes',
+        eventTitle: session.event_title,
+        eventYear: session.event_year,
+        eventMonth: session.event_month,
         timestamp: new Date(session.timestamp).toISOString(),
         createdAt: session.created_at,
         updatedAt: session.updated_at,

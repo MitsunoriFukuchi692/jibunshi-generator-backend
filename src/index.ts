@@ -7,17 +7,14 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// ルートインポート
 import aiRoutes from './routes/ai.js';
 import biographyRoutes from './routes/biography.js';
 import pdfRoutes from './routes/pdf.js';
 import timelineRoutes from './routes/timeline.js';
 import usersRoutes from './routes/users.js';
 import photosRoutes from './routes/photos.js';
-import cleanupRoutes from './routes/cleanup.js';  // ✅ 新: cleanup ルート
-// import photoRoutes from './routes/photo.js';
+import cleanupRoutes from './routes/cleanup.js';
 import interviewRoutes from './routes/interview.js';
-import interviewSessionRoutes from './routes/interview-session.js';  // ✅ 新: interview-session ルート
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,10 +69,7 @@ app.use('/api/cleanup', cleanupRoutes);
 
 // その他のルート
 app.use('/api/timeline', timelineRoutes);
-
-// app.use('/api/photo', photoRoutes);
 app.use('/api/interview', interviewRoutes);
-app.use('/api/interview-session', interviewSessionRoutes);  // ✅ 新: interview-session ルート
 
 // DEBUG: テーブル初期化エンドポイント（404ハンドラーより前に定義）
 app.get('/api/init-db', (req, res) => {
@@ -123,14 +117,10 @@ app.get('/', (req: Request, res: Response) => {
         delete: 'DELETE /api/photo/:id'
       },
       interview: {
-        create: 'POST /api/interview',
-        list: 'GET /api/interview/user/:userId',
-        save: 'POST /api/interview/save'
-      },
-      interviewSession: {
-        save: 'POST /api/interview-session/save',  // ✅ 新
-        load: 'GET /api/interview-session/load',   // ✅ 新
-        delete: 'DELETE /api/interview-session'    // ✅ 新
+        save: 'POST /api/interview/save',
+        load: 'GET /api/interview/load',
+        info: 'GET /api/interview/info',
+        delete: 'DELETE /api/interview'
       }
     }
   });
