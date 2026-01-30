@@ -55,6 +55,35 @@ const ensureTablesExist = (db: any): void => {
       )
     `);
 
+    // ✅ 既存テーブルに新しいカラムを追加（カラムが存在しない場合のみ）
+    try {
+      db.exec(`ALTER TABLE interview_sessions ADD COLUMN event_title TEXT`);
+      console.log('✅ event_title カラム追加');
+    } catch (e) {
+      // カラムが既に存在する場合はスキップ
+    }
+
+    try {
+      db.exec(`ALTER TABLE interview_sessions ADD COLUMN event_year INTEGER`);
+      console.log('✅ event_year カラム追加');
+    } catch (e) {
+      // カラムが既に存在する場合はスキップ
+    }
+
+    try {
+      db.exec(`ALTER TABLE interview_sessions ADD COLUMN event_month INTEGER`);
+      console.log('✅ event_month カラム追加');
+    } catch (e) {
+      // カラムが既に存在する場合はスキップ
+    }
+
+    try {
+      db.exec(`ALTER TABLE interview_sessions ADD COLUMN event_description TEXT`);
+      console.log('✅ event_description カラム追加');
+    } catch (e) {
+      // カラムが既に存在する場合はスキップ
+    }
+
     // ✅ インデックス作成（高速化）
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_interview_sessions_user_id ON interview_sessions(user_id);
