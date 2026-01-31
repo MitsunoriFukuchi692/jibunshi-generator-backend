@@ -267,9 +267,11 @@ export function closeDb(): void {
 
 // ===== 自動初期化 =====
 // モジュール読み込み時に自動的にデータベースを初期化
-try {
-  initDb();
-  console.log('✅ Database auto-initialized on module load');
-} catch (error) {
-  console.error('❌ Failed to initialize database on module load:', error);
-}
+// ⚠️ 注意：index.ts で initDb() が呼ばれるため、ここでは呼ばない
+// 重複初期化を防ぐためコメントアウト
+// try {
+//   initDb();
+//   console.log('✅ Database auto-initialized on module load');
+// } catch (error) {
+//   console.error('❌ Failed to initialize database on module load:', error);
+// }
