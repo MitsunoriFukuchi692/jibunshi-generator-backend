@@ -321,6 +321,13 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
   }
 });
 
+// ========================================
+// ❌ 【非推奨】GET /api/interview-session/info
+// ========================================
+// 【理由】メタデータのみを返すため、フロントエンドでセッション状態が不正確になる
+// → /load エンドポイントを使用してください（実際のセッションデータを返す）
+// ========================================
+/*
 // ✅ セッション情報取得エンドポイント
 router.get('/info', checkAuth, async (req: Request, res: Response) => {
   try {
@@ -383,6 +390,7 @@ router.get('/info', checkAuth, async (req: Request, res: Response) => {
     });
   }
 });
+*/
 
 // ============================================
 // ✅ 【新規追加】POST /api/interview/save-all - 全データ一括保存
