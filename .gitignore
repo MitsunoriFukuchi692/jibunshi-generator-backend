@@ -1,6 +1,5 @@
 node_modules/
 pdfs/
-data/jibunshi.db
 .env
 .env.local
 *.log
