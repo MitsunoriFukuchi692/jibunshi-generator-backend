@@ -1,7 +1,7 @@
-// 📁 server/src/routes/interview.ts (PostgreSQL版)
+// 📁 server/src/routes/interview.ts (SQLite/PostgreSQL両対応版)
 // interview-session のセッション保存・復元を管理するエンドポイント
 // save-all エンドポイント含む完全版
-// 【修正】タイムスタンプの Invalid time value エラー対応
+// 【修正】NOW() → CURRENT_TIMESTAMP（SQLite/PostgreSQL両対応）
 
 import { Router, Request, Response } from 'express';
 import { queryRow, queryAll, queryRun } from '../db.js';
@@ -93,11 +93,11 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     const conversationJson = JSON.stringify(conversation);
     const answersJson = JSON.stringify(answersWithPhotos);
 
-    // ✅ 新しいデータなので保存（PostgreSQL UPSERT）
+    // ✅ 新しいデータなので保存（PostgreSQL UPSERT / SQLite REPLACE）
     const result = await queryRun(
       `INSERT INTO interview_sessions 
       (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(user_id) DO UPDATE SET
         current_question_index = excluded.current_question_index,
         conversation = excluded.conversation,
@@ -107,7 +107,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
         event_month = excluded.event_month,
         event_description = excluded.event_description,
         timestamp = excluded.timestamp,
-        updated_at = NOW()
+        updated_at = CURRENT_TIMESTAMP
       RETURNING id, user_id`,
       [
         userId,
@@ -404,7 +404,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         is_auto_generated,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING id`,
       [
         userId,
@@ -454,7 +454,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
             description,
             display_order,
             created_at
-          ) VALUES (?, ?, ?, ?, NOW())`,
+          ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
           [
             timelineId,
             photoPath,
@@ -487,7 +487,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         SET 
           answers_with_photos = ?,
           timestamp = ?,
-          updated_at = NOW()
+          updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?`,
         [
           JSON.stringify(answersWithPhotos),
