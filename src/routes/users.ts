@@ -1,10 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { getDb } from '../db.js';  // ✅ 修正：db.ts から getDb をimport
+import { queryRow, queryAll, queryRun } from '../db.js';
 import { generateToken, verifyToken, extractToken, hashToken, calculateSessionExpiry } from '../utils/auth.js';
 
 const router = Router();
-
-// ✅ 修正：db.ts で既に initDb() が実行されているので、getDb() を使用
 
 // ============================================
 // ユーティリティ関数
@@ -12,62 +10,52 @@ const router = Router();
 
 /**
  * 年齢から生年を計算
- * @param age 年齢
- * @returns 生年（4桁の数字）
  */
 function calculateBirthYear(age: number): number {
   const currentDate = new Date();
   const currentYear = currentDate.getFullYear();
-  const currentMonth = currentDate.getMonth() + 1; // 1-12
-  const currentDay = currentDate.getDate();
-
-  // 生年を計算（大雑把）
-  // 例：2025年1月、年齢65歳 → 1960年生まれ
   let birthYear = currentYear - age;
-
-  // より正確に：誕生日が過ぎていない場合は-1
-  // ここでは簡略版（実装側で月日チェック）
   return birthYear;
 }
 
 /**
  * 名前+月日で既存ユーザーを検索
  */
-function findUserByNameAndBirthday(name: string, birthMonth: number, birthDay: number) {
-  const stmt = getDb().prepare(
-    'SELECT id, name, age, birth_month, birth_day, birth_year FROM users WHERE name = ? AND birth_month = ? AND birth_day = ?'
+async function findUserByNameAndBirthday(name: string, birthMonth: number, birthDay: number) {
+  return await queryRow(
+    'SELECT id, name, age, birth_month, birth_day, birth_year FROM users WHERE name = ? AND birth_month = ? AND birth_day = ?',
+    [name.trim(), birthMonth, birthDay]
   );
-  return stmt.get(name.trim(), birthMonth, birthDay) as any;
 }
 
 /**
  * 同じ名前のユーザーを全て検索（複数人確認用）
  */
-function findUsersByName(name: string) {
-  const stmt = getDb().prepare(
-    'SELECT id, name, age, birth_month, birth_day FROM users WHERE name = ?'
+async function findUsersByName(name: string) {
+  return await queryAll(
+    'SELECT id, name, age, birth_month, birth_day FROM users WHERE name = ?',
+    [name.trim()]
   );
-  return stmt.all(name.trim()) as any[];
 }
 
 /**
  * セッションを保存（ログイン時）
  */
-function saveSession(userId: number, deviceId: string, token: string): boolean {
+async function saveSession(userId: number, deviceId: string, token: string): Promise<boolean> {
   try {
     const tokenHash = hashToken(token);
     const expiresAt = calculateSessionExpiry();
 
     // 既存のセッションがあれば削除
-    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    await queryRun('DELETE FROM sessions WHERE user_id = ?', [userId]);
 
     // 新しいセッションを保存
-    const stmt = getDb().prepare(
+    await queryRun(
       `INSERT INTO sessions (user_id, device_id, token_hash, expires_at)
-       VALUES (?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?)`,
+      [userId, deviceId, tokenHash, expiresAt.toISOString()]
     );
 
-    stmt.run(userId, deviceId, tokenHash, expiresAt.toISOString());
     console.log(`   ✅ Session saved: userId=${userId}, deviceId=${deviceId}`);
     return true;
   } catch (error: any) {
@@ -79,12 +67,13 @@ function saveSession(userId: number, deviceId: string, token: string): boolean {
 /**
  * セッションを検証
  */
-function verifySession(userId: number, token: string): boolean {
+async function verifySession(userId: number, token: string): Promise<boolean> {
   try {
     const tokenHash = hashToken(token);
-    const session = getDb().prepare(
-      'SELECT id, expires_at FROM sessions WHERE user_id = ? AND token_hash = ?'
-    ).get(userId, tokenHash) as any;
+    const session = await queryRow(
+      'SELECT id, expires_at FROM sessions WHERE user_id = ? AND token_hash = ?',
+      [userId, tokenHash]
+    );
 
     if (!session) {
       console.log(`   ❌ Session not found for userId=${userId}`);
@@ -99,7 +88,7 @@ function verifySession(userId: number, token: string): boolean {
     }
 
     // last_activity を更新
-    getDb().prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(session.id);
+    await queryRun('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?', [session.id]);
 
     console.log(`   ✅ Session verified: userId=${userId}`);
     return true;
@@ -132,11 +121,9 @@ const authenticate = (req: Request, res: Response, next: Function) => {
 
 // ============================================
 // POST /api/users/register - ユーザー新規登録
-// 入力項目：名前、年齢、生年月日（月日）、PIN（4桁数字）
 // ============================================
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    // ✅ 修正：camelCaseとsnake_caseの両方に対応
     const { name, age, birthMonth, birth_month, birthDay, birth_day, pin, deviceId } = req.body;
     
     const bMonth = birthMonth || birth_month;
@@ -164,7 +151,7 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // 同じ名前+月日の組み合わせで重複チェック
-    const existingUser = findUserByNameAndBirthday(name, bMonth, bDay);
+    const existingUser = await findUserByNameAndBirthday(name, bMonth, bDay);
     if (existingUser) {
       return res.status(400).json({ error: 'このお名前と生年月日の組み合わせは既に登録されています。' });
     }
@@ -173,28 +160,28 @@ router.post('/register', async (req: Request, res: Response) => {
     const birthYear = calculateBirthYear(age);
 
     // ユーザーを登録
-    const stmt = getDb().prepare(
+    const result = await queryRun(
       `INSERT INTO users (name, age, birth_month, birth_day, birth_year, pin, status, progress_stage)
-       VALUES (?, ?, ?, ?, ?, ?, 'active', 'birth')`
+       VALUES (?, ?, ?, ?, ?, ?, 'active', 'birth') RETURNING id`,
+      [name.trim(), age, bMonth, bDay, birthYear, pin.toString()]
     );
 
-    const result = stmt.run(name.trim(), age, bMonth, bDay, birthYear, pin.toString());
-
-    console.log(`✅ [register] User registered: name="${name.trim()}", userId=${result.lastInsertRowid}, birth=${bMonth}/${bDay}`);
+    const userId = result.rows?.[0]?.id;
+    console.log(`✅ [register] User registered: name="${name.trim()}", userId=${userId}, birth=${bMonth}/${bDay}`);
 
     // JWTトークンを生成
-    const token = generateToken(result.lastInsertRowid as number, name.trim());
+    const token = generateToken(userId, name.trim());
 
     // セッションを保存
     const sessionDeviceId = deviceId || `device-${Date.now()}`;
-    saveSession(result.lastInsertRowid as number, sessionDeviceId, token);
+    await saveSession(userId, sessionDeviceId, token);
 
     res.status(201).json({
       message: '登録が完了しました。',
       token,
-      userId: result.lastInsertRowid,
+      userId: userId,
       user: {
-        id: result.lastInsertRowid,
+        id: userId,
         name: name.trim(),
         age,
       },
@@ -208,7 +195,6 @@ router.post('/register', async (req: Request, res: Response) => {
 
 // ============================================
 // POST /api/users/login/check-name - ログイン：名前確認
-// 同じ名前が複数いる場合は月日入力を促す
 // ============================================
 router.post('/login/check-name', async (req: Request, res: Response) => {
   try {
@@ -222,7 +208,7 @@ router.post('/login/check-name', async (req: Request, res: Response) => {
     console.log(`   Input name: "${name}" (trimmed: "${name.trim()}")`);
 
     // 同じ名前のユーザーを全て検索
-    const users = findUsersByName(name);
+    const users = await findUsersByName(name);
 
     console.log(`📊 [login/check-name] Database query result`);
     console.log(`   Found ${users.length} user(s)`);
@@ -231,7 +217,6 @@ router.post('/login/check-name', async (req: Request, res: Response) => {
     }
 
     if (users.length === 0) {
-      // ユーザーが存在しない
       console.log(`   ⚠️ No user found with name "${name}"`);
       return res.status(200).json({
         exists: false,
@@ -241,7 +226,6 @@ router.post('/login/check-name', async (req: Request, res: Response) => {
     }
 
     if (users.length === 1) {
-      // 同じ名前が1人だけ → 月日入力へ（またはPIN直接）
       const user = users[0];
       console.log(`   ✅ Single user found: ${user.name} (id=${user.id})`);
       return res.status(200).json({
@@ -253,7 +237,6 @@ router.post('/login/check-name', async (req: Request, res: Response) => {
       });
     }
 
-    // 同じ名前が複数人 → 月日で区別
     console.log(`   👥 Multiple users found: ${users.length}`);
     return res.status(200).json({
       exists: true,
@@ -269,52 +252,52 @@ router.post('/login/check-name', async (req: Request, res: Response) => {
     });
 
   } catch (error: any) {
-    console.error('❌ Check name error:', error);
-    res.status(500).json({ error: 'エラーが発生しました。' });
+    console.error('❌ Error in login/check-name:', error);
+    res.status(500).json({ error: 'ログイン処理に失敗しました。' });
   }
 });
 
 // ============================================
-// POST /api/users/login/check-birthday - ログイン：月日確認
+// POST /api/users/login/verify-birthday - ログイン：月日確認
 // ============================================
-router.post('/login/check-birthday', async (req: Request, res: Response) => {
+router.post('/login/verify-birthday', async (req: Request, res: Response) => {
   try {
     const { name, birthMonth, birth_month, birthDay, birth_day } = req.body;
     
     const bMonth = birthMonth || birth_month;
     const bDay = birthDay || birth_day;
 
-    if (!name || !name.trim() || !bMonth || !bDay) {
+    if (!name || !bMonth || !bDay) {
       return res.status(400).json({ error: '必要な情報が不足しています。' });
     }
 
-    console.log(`\n📅 [login/check-birthday] Checking ${name} (${bMonth}/${bDay})`);
+    console.log(`\n📅 [login/verify-birthday] Verifying birthday for name="${name}"`);
 
     // 名前+月日でユーザーを検索
-    const user = findUserByNameAndBirthday(name, bMonth, bDay);
+    const user = await findUserByNameAndBirthday(name, bMonth, bDay);
 
     if (!user) {
-      console.log(`   ❌ User not found: ${name} (${bMonth}/${bDay})`);
-      return res.status(400).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。' });
+      console.log(`   ❌ User not found with name="${name}", birthday=${bMonth}/${bDay}`);
+      return res.status(404).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。' });
     }
 
     console.log(`   ✅ User found: ${user.name} (id=${user.id})`);
 
     res.status(200).json({
-      message: 'PINを入力してください。',
+      exists: true,
       userId: user.id,
       name: user.name,
-      age: user.age
+      message: 'PINを入力してください。'
     });
 
   } catch (error: any) {
-    console.error('❌ Check birthday error:', error);
-    res.status(500).json({ error: 'エラーが発生しました。' });
+    console.error('❌ Error in login/verify-birthday:', error);
+    res.status(500).json({ error: 'ログイン処理に失敗しました。' });
   }
 });
 
 // ============================================
-// POST /api/users/login/verify-pin - ログイン：PIN検証 + セッション保存
+// POST /api/users/login/verify-pin - ログイン：PIN検証
 // ============================================
 router.post('/login/verify-pin', async (req: Request, res: Response) => {
   try {
@@ -331,9 +314,10 @@ router.post('/login/verify-pin', async (req: Request, res: Response) => {
     console.log(`\n🔑 [login/verify-pin] Verifying PIN for userId=${userId}`);
 
     // ユーザーを取得
-    const user = getDb().prepare(
-      'SELECT id, name, pin, age FROM users WHERE id = ?'
-    ).get(userId) as any;
+    const user = await queryRow(
+      'SELECT id, name, pin, age FROM users WHERE id = ?',
+      [userId]
+    );
 
     if (!user) {
       console.log(`   ❌ User not found: id=${userId}`);
@@ -351,9 +335,9 @@ router.post('/login/verify-pin', async (req: Request, res: Response) => {
     // JWTトークンを生成
     const token = generateToken(user.id, user.name);
 
-    // セッションを保存（✅ 新機能）
+    // セッションを保存
     const sessionDeviceId = deviceId || `device-${Date.now()}`;
-    const sessionSaved = saveSession(user.id, sessionDeviceId, token);
+    const sessionSaved = await saveSession(user.id, sessionDeviceId, token);
 
     if (!sessionSaved) {
       return res.status(500).json({ error: 'セッション保存に失敗しました。' });
@@ -378,7 +362,6 @@ router.post('/login/verify-pin', async (req: Request, res: Response) => {
 
 // ============================================
 // POST /api/users/login/forgot-pin - PIN忘れ対応
-// 名前+月日で本人確認後、新しいPINを設定
 // ============================================
 router.post('/login/forgot-pin', async (req: Request, res: Response) => {
   try {
@@ -396,15 +379,14 @@ router.post('/login/forgot-pin', async (req: Request, res: Response) => {
     }
 
     // 名前+月日でユーザーを検索
-    const user = findUserByNameAndBirthday(name, bMonth, bDay);
+    const user = await findUserByNameAndBirthday(name, bMonth, bDay);
 
     if (!user) {
       return res.status(404).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。' });
     }
 
     // PINを更新
-    const stmt = getDb().prepare('UPDATE users SET pin = ? WHERE id = ?');
-    stmt.run(newPin.toString(), user.id);
+    await queryRun('UPDATE users SET pin = ? WHERE id = ?', [newPin.toString(), user.id]);
 
     console.log(`✅ [forgot-pin] PIN updated for user: ${user.name}`);
 
@@ -422,18 +404,17 @@ router.post('/login/forgot-pin', async (req: Request, res: Response) => {
 // ============================================
 // GET /api/users/me - 現在のユーザー情報取得（認証必須）
 // ============================================
-router.get('/me', authenticate, (req: Request, res: Response) => {
+router.get('/me', authenticate, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const token = (req as any).token;
 
     // セッションを検証
-    if (!verifySession(user.userId, token)) {
+    if (!await verifySession(user.userId, token)) {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = getDb().prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
-    const userData = stmt.get(user.userId);
+    const userData = await queryRow('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?', [user.userId]);
 
     if (!userData) {
       return res.status(404).json({ error: 'ユーザーが見つかりません。' });
@@ -449,7 +430,7 @@ router.get('/me', authenticate, (req: Request, res: Response) => {
 // ============================================
 // GET /api/users/:id - 特定ユーザー取得（認証必須、本人のみ）
 // ============================================
-router.get('/:id', authenticate, (req: Request, res: Response) => {
+router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
@@ -461,12 +442,11 @@ router.get('/:id', authenticate, (req: Request, res: Response) => {
     }
 
     // セッションを検証
-    if (!verifySession(user.userId, token)) {
+    if (!await verifySession(user.userId, token)) {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = getDb().prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?');
-    const userData = stmt.get(id);
+    const userData = await queryRow('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?', [id]);
 
     if (!userData) {
       return res.status(404).json({ error: 'ユーザーが見つかりません。' });
@@ -482,7 +462,7 @@ router.get('/:id', authenticate, (req: Request, res: Response) => {
 // ============================================
 // PUT /api/users/:id - ユーザー情報更新（認証必須、本人のみ）
 // ============================================
-router.put('/:id', authenticate, (req: Request, res: Response) => {
+router.put('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
@@ -495,22 +475,21 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
     }
 
     // セッションを検証
-    if (!verifySession(user.userId, token)) {
+    if (!await verifySession(user.userId, token)) {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = getDb().prepare(
+    await queryRun(
       `UPDATE users 
        SET age = COALESCE(?, age),
            progress_stage = COALESCE(?, progress_stage),
            status = COALESCE(?, status),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`
+       WHERE id = ?`,
+      [age || null, progress_stage || null, status || null, id]
     );
 
-    stmt.run(age, progress_stage, status, id);
-
-    const updatedUser = getDb().prepare('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?').get(id);
+    const updatedUser = await queryRow('SELECT id, name, age, status, progress_stage FROM users WHERE id = ?', [id]);
     res.json(updatedUser);
   } catch (error: any) {
     console.error('❌ Error:', error);
@@ -521,7 +500,7 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
 // ============================================
 // DELETE /api/users/:id - ユーザー削除（認証必須、本人のみ）
 // ============================================
-router.delete('/:id', authenticate, (req: Request, res: Response) => {
+router.delete('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
@@ -533,15 +512,12 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
     }
 
     // セッションを検証
-    if (!verifySession(user.userId, token)) {
+    if (!await verifySession(user.userId, token)) {
       return res.status(401).json({ error: 'セッションが無効です。もう一度ログインしてください。' });
     }
 
-    const stmt = getDb().prepare('DELETE FROM users WHERE id = ?');
-    stmt.run(id);
-
-    // セッションも削除
-    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+    await queryRun('DELETE FROM users WHERE id = ?', [id]);
+    await queryRun('DELETE FROM sessions WHERE user_id = ?', [id]);
 
     res.json({ message: 'ユーザーが削除されました。' });
   } catch (error: any) {
@@ -553,12 +529,12 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
 // ============================================
 // POST /api/users/logout - ログアウト（セッション削除）
 // ============================================
-router.post('/logout', authenticate, (req: Request, res: Response) => {
+router.post('/logout', authenticate, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
 
     // セッションを削除
-    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(user.userId);
+    await queryRun('DELETE FROM sessions WHERE user_id = ?', [user.userId]);
 
     console.log(`✅ [logout] User logged out: userId=${user.userId}`);
 
@@ -569,10 +545,12 @@ router.post('/logout', authenticate, (req: Request, res: Response) => {
   }
 });
 
+// ============================================
 // DEBUG: GET /api/users/debug/all-users - 全ユーザー確認（テスト用）
-router.get('/debug/all-users', (req: Request, res: Response) => {
+// ============================================
+router.get('/debug/all-users', async (req: Request, res: Response) => {
   try {
-       const users = getDb().prepare('SELECT id, name, age, birth_month, birth_day, created_at FROM users ORDER BY created_at DESC LIMIT 20').all();
+    const users = await queryAll('SELECT id, name, age, birth_month, birth_day, created_at FROM users ORDER BY created_at DESC LIMIT 20', []);
     
     console.log('📊 All users:', users);
     res.json({
@@ -585,4 +563,5 @@ router.get('/debug/all-users', (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 export default router;

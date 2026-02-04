@@ -3,11 +3,10 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDb } from '../db.js';
+import { queryRow } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
-// OpenAI クライアント
 const getOpenAIClient = () => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -15,9 +14,6 @@ const getOpenAIClient = () => {
     }
     return new OpenAI({ apiKey });
 };
-// ============================================
-// POST /api/ai/analyze-photo - 写真分析
-// ============================================
 router.post('/analyze-photo', async (req, res) => {
     try {
         const client = getOpenAIClient();
@@ -31,7 +27,6 @@ router.post('/analyze-photo', async (req, res) => {
         }
         const imageBuffer = fs.readFileSync(fullPath);
         const base64Image = imageBuffer.toString('base64');
-        // 画像形式を判定
         const mimeType = photoPath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
         const prompt = `この写真を詳細に分析してください。以下の情報をJSON形式で返してください:
 {
@@ -62,7 +57,6 @@ router.post('/analyze-photo', async (req, res) => {
                 },
             ],
         });
-        // レスポンスからテキストを抽出
         let responseText = '';
         if (response.choices && response.choices.length > 0) {
             const choice = response.choices[0];
@@ -70,7 +64,6 @@ router.post('/analyze-photo', async (req, res) => {
                 responseText = choice.message.content;
             }
         }
-        // JSON を抽出してパース
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         let analysis;
         try {
@@ -107,9 +100,6 @@ router.post('/analyze-photo', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-// ============================================
-// POST /api/ai/generate-questions - 質問生成
-// ============================================
 router.post('/generate-questions', async (req, res) => {
     try {
         const client = getOpenAIClient();
@@ -179,9 +169,6 @@ ${photoDescription ? `- 写真の説明: ${photoDescription}` : ''}
         res.status(500).json({ error: error.message });
     }
 });
-// ============================================
-// POST /api/ai/edit-text - テキスト自動修正
-// ============================================
 router.post('/edit-text', async (req, res) => {
     try {
         const client = getOpenAIClient();
@@ -193,7 +180,6 @@ router.post('/edit-text', async (req, res) => {
         console.log('🎭 stage:', stage);
         console.log('📨 user_prompt:', user_prompt ? '✅ あり' : '❌ なし');
         console.log('📨 responses:', responses ? `✅ ${responses.length}件` : '❌ なし');
-        // 認証チェック
         if (!token) {
             return res.status(401).json({ error: '認証が必要です' });
         }
@@ -201,27 +187,20 @@ router.post('/edit-text', async (req, res) => {
         if (!decoded) {
             return res.status(401).json({ error: '無効または期限切れのトークンです' });
         }
-        // 本人確認
         if (decoded.userId !== user_id) {
             return res.status(403).json({ error: 'アクセス権限がありません' });
         }
-        // getDb() を使用
-        const db = getDb();
-        // user_idが実際に存在するか確認
-        const userCheck = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
+        const userCheck = await queryRow('SELECT id FROM users WHERE id = ?', [user_id]);
         if (!userCheck) {
             console.error('❌ ユーザーが見つかりません:', user_id);
             return res.status(400).json({ error: 'ユーザーが見つかりません' });
         }
-        // user_prompt があるか responses 配列があるか対応
         let finalPrompt = '';
         if (user_prompt) {
-            // 新しいフォーマット：TextCorrectionPage から送られる user_prompt
             console.log('✅ user_prompt フォーマットで処理');
             finalPrompt = user_prompt;
         }
         else if (responses && Array.isArray(responses) && responses.length > 0) {
-            // レガシーフォーマット：responses 配列から生成
             console.log('✅ responses フォーマットで処理');
             const responsesText = responses
                 .map((r, i) => `【回答${i + 1}】\n${r}`)
@@ -250,7 +229,6 @@ ${responsesText}
             });
         }
         console.log('🤖 OpenAI API にテキスト修正リクエスト送信...');
-        console.log('✅ OPENAI_API_KEY exists:', !!process.env.OPENAI_API_KEY);
         const response = await client.chat.completions.create({
             model: 'gpt-4o-mini',
             max_tokens: 1000,

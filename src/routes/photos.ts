@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDb } from '../db.js';
+import { queryRow, queryAll, queryRun } from '../db.js';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import { verifyToken, extractToken } from '../utils/auth.js';
@@ -71,11 +71,10 @@ const upload = multer({
 // ============================================
 // GET /api/photos - ユーザーの写真一覧取得（認証必須）
 // ============================================
-router.get('/', authenticate, (req: Request, res: Response) => {
+router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const { userId } = req.query;
-    const db = getDb();
 
     // 指定されたuserIdが自分のIDと一致するか確認
     if (userId && parseInt(userId as string) !== user.userId) {
@@ -83,8 +82,7 @@ router.get('/', authenticate, (req: Request, res: Response) => {
     }
 
     // 認証ユーザーの写真のみ取得
-    const stmt = db.prepare('SELECT * FROM photos WHERE user_id = ? ORDER BY uploaded_at DESC');
-    const photos = stmt.all(user.userId);
+    const photos = await queryAll('SELECT * FROM photos WHERE user_id = ? ORDER BY uploaded_at DESC', [user.userId]);
     res.json(photos);
   } catch (error: any) {
     console.error('❌ Error:', error);
@@ -95,14 +93,12 @@ router.get('/', authenticate, (req: Request, res: Response) => {
 // ============================================
 // GET /api/photos/:id - 特定の写真取得（認証必須、本人のみ）
 // ============================================
-router.get('/:id', authenticate, (req: Request, res: Response) => {
+router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
-    const db = getDb();
 
-    const stmt = db.prepare('SELECT * FROM photos WHERE id = ?');
-    const photo = stmt.get(id) as any;
+    const photo = await queryRow('SELECT * FROM photos WHERE id = ?', [id]);
 
     if (!photo) {
       return res.status(404).json({ error: '写真が見つかりません。' });
@@ -123,10 +119,9 @@ router.get('/:id', authenticate, (req: Request, res: Response) => {
 // ============================================
 // POST /api/photos - 写真アップロード（認証必須）
 // ============================================
-router.post('/', authenticate, upload.single('file'), (req: Request, res: Response) => {
+router.post('/', authenticate, upload.single('file'), async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const db = getDb();
 
     if (!req.file) {
       return res.status(400).json({ error: 'ファイルがアップロードされていません。' });
@@ -148,27 +143,27 @@ router.post('/', authenticate, upload.single('file'), (req: Request, res: Respon
     console.log('💾 File saved at:', actualFilePath);
     console.log('🔗 DB filename:', savedFilename);
 
-    const stmt = db.prepare(
+    const result = await queryRun(
       `INSERT INTO photos (user_id, timeline_id, file_name, file_path, description, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, datetime('now'))`
+       VALUES (?, ?, ?, ?, ?, NOW()) RETURNING id`,
+      [
+        userId,
+        timelineId ? parseInt(timelineId) : null,
+        req.file.originalname,
+        savedFilename,
+        description || null
+      ]
     );
 
-    const result = stmt.run(
-      userId,
-      timelineId ? parseInt(timelineId) : null,
-      req.file.originalname,
-      savedFilename,  // ✅ ファイル名のみをDBに保存
-      description || null
-    );
-
-    console.log('✅ Photo uploaded successfully - id:', result.lastInsertRowid);
+    const photoId = result.rows?.[0]?.id;
+    console.log('✅ Photo uploaded successfully - id:', photoId);
 
     res.status(201).json({
-      id: result.lastInsertRowid,
+      id: photoId,
       user_id: userId,
       timeline_id: timelineId || null,
       file_name: req.file.originalname,
-      file_path: savedFilename,  // ✅ ファイル名のみを返す
+      file_path: savedFilename,
       description: description || null,
       uploaded_at: new Date().toISOString(),
     });
@@ -181,13 +176,12 @@ router.post('/', authenticate, upload.single('file'), (req: Request, res: Respon
 // ============================================
 // DELETE /api/photos/:id - 写真削除（認証必須、本人のみ）
 // ============================================
-router.delete('/:id', authenticate, (req: Request, res: Response) => {
+router.delete('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
-    const db = getDb();
 
-    const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id) as any;
+    const photo = await queryRow('SELECT * FROM photos WHERE id = ?', [id]);
 
     if (!photo) {
       return res.status(404).json({ error: '写真が見つかりません。' });
@@ -206,8 +200,7 @@ router.delete('/:id', authenticate, (req: Request, res: Response) => {
     }
 
     // DBから削除
-    const stmt = db.prepare('DELETE FROM photos WHERE id = ?');
-    stmt.run(id);
+    await queryRun('DELETE FROM photos WHERE id = ?', [id]);
 
     console.log('✅ Photo record deleted - id:', id);
 

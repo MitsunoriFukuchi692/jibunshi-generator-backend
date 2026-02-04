@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
-import { getDb } from '../db.js';
+import { queryRow, queryAll } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 import { fileURLToPath } from 'url';
 
@@ -47,10 +47,8 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       editedContentLength: editedContent?.length || 0  // ✅ 新：editedContent の長さをログ
     });
 
-    const db = getDb();
-
     // ✅ ユーザーデータ取得
-    const userRecord = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+    const userRecord = await queryRow('SELECT * FROM users WHERE id = ?', [userId]);
     if (!userRecord) {
       console.error('❌ User not found');
       return res.status(404).json({ error: 'User not found' });
@@ -67,11 +65,11 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       console.log('✅ Using editedContent from frontend (修正テキスト) - length:', biographyContent.length);
     } else if (answersWithPhotos && answersWithPhotos.length > 0) {
       // フォールバック：biography テーブルから取得を試みる
-      const biography = db.prepare(`
+      const biography = await queryRow(`
         SELECT id, edited_content 
         FROM biography 
         WHERE user_id = ?
-      `).get(userId) as any;
+      `, [userId]);
 
       if (biography && biography.edited_content && biography.edited_content.trim().length > 0) {
         biographyContent = biography.edited_content;
@@ -87,11 +85,11 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       }
     } else {
       // biography テーブルから取得
-      const biography = db.prepare(`
+      const biography = await queryRow(`
         SELECT id, edited_content 
         FROM biography 
         WHERE user_id = ?
-      `).get(userId) as any;
+      `, [userId]);
 
       if (biography && biography.edited_content) {
         biographyContent = biography.edited_content;
@@ -112,7 +110,7 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
 
     // ✅ 修正: timeline_photos から写真を取得（biography_photos ではなく）
     console.log('📸 Fetching timeline photos for user:', userId);
-    const photos = db.prepare(`
+    const photos = await queryAll(`
       SELECT file_path, description
       FROM timeline_photos
       WHERE timeline_id IN (
@@ -120,7 +118,7 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       )
       ORDER BY display_order ASC
       LIMIT 20
-    `).all(userId) as any[];
+    `, [userId]);
 
     console.log('🖼️ Photos found:', photos.length);
 
@@ -146,12 +144,12 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
     } else {
       // フォールバック：データベースから取得
       console.log('📊 Fetching timeline data from database for user:', userId);
-      timelines = db.prepare(`
+      timelines = await queryAll(`
         SELECT id, year, month, event_title, event_description
         FROM timeline
         WHERE user_id = ? AND year IS NOT NULL
         ORDER BY year ASC, month ASC
-      `).all(userId) as any[];
+      `, [userId]);
 
       console.log('📚 Found timeline records:', timelines.length);
 

@@ -1,12 +1,9 @@
 import { Router, Request, Response } from 'express';
-import { getDb } from '../db.js';
+import { queryRun } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 
 const router = Router();
 
-// ============================================
-// 認証ミドルウェア
-// ============================================
 const authenticate = (req: Request, res: Response, next: Function) => {
   const authHeader = req.headers.authorization;
   const token = extractToken(authHeader);
@@ -27,16 +24,11 @@ const authenticate = (req: Request, res: Response, next: Function) => {
   next();
 };
 
-// ============================================
-// DELETE /api/cleanup/old-data - 過去データを削除
-// ============================================
-router.delete('/old-data', authenticate, (req: Request, res: Response) => {
+router.delete('/old-data', authenticate, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
     const { user_id } = req.body;
-    const db = getDb();
 
-    // リクエストのuser_idがトークンのuserIdと一致するか確認
     if (user_id !== user.userId) {
       console.error('❌ User ID mismatch - requested:', user_id, 'token:', user.userId);
       return res.status(403).json({ error: 'アクセス権限がありません' });
@@ -44,39 +36,30 @@ router.delete('/old-data', authenticate, (req: Request, res: Response) => {
 
     console.log('🗑️ Old data cleanup request - user_id:', user_id);
 
-    // ✅ ステップ1: biography_photos を削除
-    const biographyPhotosDeleteStmt = db.prepare(`
-      DELETE FROM biography_photos 
-      WHERE biography_id IN (
-        SELECT id FROM biography WHERE user_id = ?
-      )
-    `);
-    const biographyPhotosDeleted = biographyPhotosDeleteStmt.run(user_id).changes;
+    const biographyPhotosResult = await queryRun(
+      `DELETE FROM biography_photos WHERE biography_id IN (SELECT id FROM biography WHERE user_id = ?)`,
+      [user_id]
+    );
+    const biographyPhotosDeleted = biographyPhotosResult.rowCount || 0;
     console.log('  📸 biography_photos削除:', biographyPhotosDeleted, '件');
 
-    // ✅ ステップ2: timeline_photos を削除
-    const timelinePhotosDeleteStmt = db.prepare(`
-      DELETE FROM timeline_photos 
-      WHERE timeline_id IN (
-        SELECT id FROM timeline WHERE user_id = ?
-      )
-    `);
-    const timelinePhotosDeleted = timelinePhotosDeleteStmt.run(user_id).changes;
+    const timelinePhotosResult = await queryRun(
+      `DELETE FROM timeline_photos WHERE timeline_id IN (SELECT id FROM timeline WHERE user_id = ?)`,
+      [user_id]
+    );
+    const timelinePhotosDeleted = timelinePhotosResult.rowCount || 0;
     console.log('  📸 timeline_photos削除:', timelinePhotosDeleted, '件');
 
-    // ✅ ステップ3: timeline を削除
-    const timelineDeleteStmt = db.prepare('DELETE FROM timeline WHERE user_id = ?');
-    const timelineDeleted = timelineDeleteStmt.run(user_id).changes;
+    const timelineResult = await queryRun('DELETE FROM timeline WHERE user_id = ?', [user_id]);
+    const timelineDeleted = timelineResult.rowCount || 0;
     console.log('  📝 timeline削除:', timelineDeleted, '件');
 
-    // ✅ ステップ4: biography を削除
-    const biographyDeleteStmt = db.prepare('DELETE FROM biography WHERE user_id = ?');
-    const biographyDeleted = biographyDeleteStmt.run(user_id).changes;
+    const biographyResult = await queryRun('DELETE FROM biography WHERE user_id = ?', [user_id]);
+    const biographyDeleted = biographyResult.rowCount || 0;
     console.log('  📚 biography削除:', biographyDeleted, '件');
 
-    // ✅ ステップ5: timeline_metadata を削除
-    const timelineMetadataDeleteStmt = db.prepare('DELETE FROM timeline_metadata WHERE user_id = ?');
-    const timelineMetadataDeleted = timelineMetadataDeleteStmt.run(user_id).changes;
+    const timelineMetadataResult = await queryRun('DELETE FROM timeline_metadata WHERE user_id = ?', [user_id]);
+    const timelineMetadataDeleted = timelineMetadataResult.rowCount || 0;
     console.log('  📊 timeline_metadata削除:', timelineMetadataDeleted, '件');
 
     console.log('✅ Old data cleanup completed', {
