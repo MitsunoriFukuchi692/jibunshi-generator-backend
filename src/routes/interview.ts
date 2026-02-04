@@ -185,18 +185,18 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // JSON文字列をパース
+    // JSON文字列をパース（安全な処理）
     try {
       const parsedSession = {
-        currentQuestionIndex: session.currentQuestionIndex,
-        conversation: JSON.parse(session.conversation),
-        answersWithPhotos: JSON.parse(session.answersWithPhotos),
-        eventTitle: session.eventTitle,
-        eventYear: session.eventYear,
-        eventMonth: session.eventMonth,
-        eventDescription: session.eventDescription,
-        timestamp: session.timestamp,
-        updatedAt: session.updatedAt
+        currentQuestionIndex: session.currentQuestionIndex || 0,
+        conversation: session.conversation ? JSON.parse(session.conversation) : [],
+        answersWithPhotos: session.answersWithPhotos ? JSON.parse(session.answersWithPhotos) : [],
+        eventTitle: session.eventTitle || null,
+        eventYear: session.eventYear || null,
+        eventMonth: session.eventMonth || null,
+        eventDescription: session.eventDescription || null,
+        timestamp: session.timestamp || Date.now(),
+        updatedAt: session.updatedAt || new Date().toISOString()
       };
 
       // ✅ データ整合性チェック
