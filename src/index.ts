@@ -71,7 +71,8 @@ async function startServer() {
   // その他のルート
   app.use('/api/timeline', timelineRoutes);
   app.use('/api/interview', interviewRoutes);
-
+  app.use('/api/interview-session', interviewRoutes);  // フロントエンド互換性のためのエイリアス
+  
   // DEBUG: テーブル初期化エンドポイント（404ハンドラーより前に定義）
   app.get('/api/init-db', async (req, res) => {
     try {
