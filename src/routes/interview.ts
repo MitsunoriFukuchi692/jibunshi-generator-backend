@@ -472,7 +472,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     }
 
     // ============================================
-    // ステップ5：interview_sessions も更新
+    // ステップ5：interview_sessions も更新（UPSERT）
     // ============================================
     try {
       // answersWithPhotos 形式に変換
@@ -482,26 +482,44 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         photos: a.photos || []
       })) || [];
 
+      // current_question_indexを計算（答えた質問の数）
+      const currentQuestionIndex = answersWithPhotos.length;
+
       await queryRun(
-        `UPDATE interview_sessions
-        SET 
-          answers_with_photos = ?,
-          timestamp = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?`,
+        `INSERT INTO interview_sessions 
+          (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id) DO UPDATE SET
+          current_question_index = excluded.current_question_index,
+          conversation = excluded.conversation,
+          answers_with_photos = excluded.answers_with_photos,
+          event_title = excluded.event_title,
+          event_year = excluded.event_year,
+          event_month = excluded.event_month,
+          event_description = excluded.event_description,
+          timestamp = excluded.timestamp,
+          updated_at = CURRENT_TIMESTAMP`,
         [
+          userId,
+          currentQuestionIndex,
+          JSON.stringify([]),  // conversation（空配列）
           JSON.stringify(answersWithPhotos),
-          validTimestamp,
-          userId
+          event_info?.title || null,
+          eventYear || null,
+          event_info?.month || null,
+          eventDescription || null,
+          validTimestamp
         ]
       );
 
-      console.log('✅ Interview session を更新:', {
+      console.log('✅ Interview session を保存:', {
         userId,
+        currentQuestionIndex,
         answersCount: answersWithPhotos.length
       });
     } catch (sessionError: any) {
-      console.warn('⚠️ Interview session 更新に失敗（無視）:', sessionError.message);
+      console.error('❌ Interview session 保存エラー:', sessionError);
+      throw new Error(`Interview session保存に失敗: ${sessionError.message}`);
     }
 
     // ============================================
