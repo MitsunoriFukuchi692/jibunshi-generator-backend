@@ -297,6 +297,45 @@ router.post('/login/verify-birthday', async (req: Request, res: Response) => {
 });
 
 // ============================================
+// POST /api/users/login/check-birthday - ログイン：誕生日確認（check-birthdayエイリアス）
+// ============================================
+router.post('/login/check-birthday', async (req: Request, res: Response) => {
+  try {
+    const { name, birthMonth, birth_month, birthDay, birth_day } = req.body;
+    
+    const bMonth = birthMonth || birth_month;
+    const bDay = birthDay || birth_day;
+
+    if (!name || !bMonth || !bDay) {
+      return res.status(400).json({ error: '必要な情報が不足しています。' });
+    }
+
+    console.log(`\n📅 [login/check-birthday] Verifying birthday for name="${name}"`);
+
+    // 名前+月日でユーザーを検索
+    const user = await findUserByNameAndBirthday(name, bMonth, bDay);
+
+    if (!user) {
+      console.log(`   ❌ User not found with name="${name}", birthday=${bMonth}/${bDay}`);
+      return res.status(404).json({ error: 'このお名前と生年月日の組み合わせが見つかりません。' });
+    }
+
+    console.log(`   ✅ User found: ${user.name} (id=${user.id})`);
+
+    res.status(200).json({
+      exists: true,
+      userId: user.id,
+      name: user.name,
+      message: 'PINを入力してください。'
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error in login/check-birthday:', error);
+    res.status(500).json({ error: 'ログイン処理に失敗しました。' });
+  }
+});
+
+// ============================================
 // POST /api/users/login/verify-pin - ログイン：PIN検証
 // ============================================
 router.post('/login/verify-pin', async (req: Request, res: Response) => {
