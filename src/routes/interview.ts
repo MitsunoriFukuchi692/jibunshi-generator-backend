@@ -1,15 +1,14 @@
-// 📁 server/src/routes/interview.ts (SQLite/PostgreSQL両対応版)
-// interview-session のセッション保存・復元を管理するエンドポイント
-// save-all エンドポイント含む完全版
-// 【修正】NOW() → CURRENT_TIMESTAMP（SQLite/PostgreSQL両対応）
+// 📁 server/src/routes/interview.ts
+// SQLite/PostgreSQL両対応の完全修正版
+// save エンドポイント: UPSERT を両DBで動作するように修正
 
 import { Router, Request, Response } from 'express';
-import { queryRow, queryAll, queryRun } from '../db.js';
+import { queryRow, queryAll, queryRun, isPostgresConnection } from '../db.js';
 import { verifyToken, extractToken } from '../utils/auth.js';
 
 const router = Router();
 
-// ✅ 認証チェック（utils/auth の verifyToken を使用）
+// ✅ 認証チェック
 const checkAuth = (req: Request, res: Response, next: Function) => {
   const authHeader = req.headers.authorization;
   const token = extractToken(authHeader);
@@ -29,16 +28,14 @@ const checkAuth = (req: Request, res: Response, next: Function) => {
     });
   }
 
-  // userId を request に設定
   (req as any).userId = decoded.userId;
   (req as any).token = token;
   next();
 };
 
 // ============================================
-// ✅ POST /api/interview/save - セッション保存
+// ✅ POST /api/interview/save - セッション保存（修正版）
 // ============================================
-// タイムスタンプ競合解決版
 router.post('/save', checkAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
@@ -58,7 +55,6 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'user_id is required' });
     }
 
-    // タイムスタンプの有効性を確認
     const validTimestamp = typeof timestamp === 'number' && timestamp > 0 ? timestamp : Date.now();
 
     console.log('💾 [Save] セッション保存開始:', {
@@ -76,7 +72,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     ) as any;
 
     // ✅ タイムスタンプ比較：新しいデータのみ保存
-    if (existing && existing.timestamp > validTimestamp) {
+    if (existing && existing.timestamp && existing.timestamp > validTimestamp) {
       console.log('⚠️ [Save] 古いデータのため保存をスキップ:', {
         userId,
         existingTimestamp: new Date(existing.timestamp).toISOString(),
@@ -90,42 +86,65 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     }
 
     // ✅ JSON化
-    const conversationJson = JSON.stringify(conversation);
-    const answersJson = JSON.stringify(answersWithPhotos);
+    const conversationJson = JSON.stringify(conversation || []);
+    const answersJson = JSON.stringify(answersWithPhotos || []);
 
-    // ✅ 新しいデータなので保存（PostgreSQL UPSERT / SQLite REPLACE）
-    const result = await queryRun(
-      `INSERT INTO interview_sessions 
-      (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(user_id) DO UPDATE SET
-        current_question_index = excluded.current_question_index,
-        conversation = excluded.conversation,
-        answers_with_photos = excluded.answers_with_photos,
-        event_title = excluded.event_title,
-        event_year = excluded.event_year,
-        event_month = excluded.event_month,
-        event_description = excluded.event_description,
-        timestamp = excluded.timestamp,
-        updated_at = CURRENT_TIMESTAMP
-      RETURNING id, user_id`,
-      [
-        userId,
-        currentQuestionIndex,
-        conversationJson,
-        answersJson,
-        eventTitle || null,
-        eventYear || null,
-        eventMonth || null,
-        eventDescription || null,
-        validTimestamp
-      ]
-    );
+    // ✅ SQLite/PostgreSQL 互換性：既存データがあるか確認
+    if (existing) {
+      // UPDATE パターン（既存データがある場合）
+      console.log('🔄 [Save] 既存データを更新:', { userId });
+      
+      await queryRun(
+        `UPDATE interview_sessions
+        SET 
+          current_question_index = ?,
+          conversation = ?,
+          answers_with_photos = ?,
+          event_title = ?,
+          event_year = ?,
+          event_month = ?,
+          event_description = ?,
+          timestamp = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?`,
+        [
+          currentQuestionIndex,
+          conversationJson,
+          answersJson,
+          eventTitle || null,
+          eventYear || null,
+          eventMonth || null,
+          eventDescription || null,
+          validTimestamp,
+          userId
+        ]
+      );
+    } else {
+      // INSERT パターン（新規データの場合）
+      console.log('✨ [Save] 新規セッションを作成:', { userId });
+      
+      await queryRun(
+        `INSERT INTO interview_sessions 
+        (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          userId,
+          currentQuestionIndex,
+          conversationJson,
+          answersJson,
+          eventTitle || null,
+          eventYear || null,
+          eventMonth || null,
+          eventDescription || null,
+          validTimestamp
+        ]
+      );
+    }
 
     console.log('✅ [Save] セッション保存完了:', {
       userId,
       currentQuestionIndex,
-      answersCount: answersWithPhotos.length,
+      answersCount: answersWithPhotos?.length || 0,
       eventTitle,
       timestamp: new Date(validTimestamp).toISOString()
     });
@@ -136,17 +155,18 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       data: {
         user_id: userId,
         currentQuestionIndex,
-        answersCount: answersWithPhotos.length,
+        answersCount: answersWithPhotos?.length || 0,
         eventTitle,
         savedAt: new Date().toISOString()
       }
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ [Error] セッション保存エラー:', error);
     res.status(500).json({
       error: 'Failed to save session',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: error instanceof Error ? error.message : 'Unknown error',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -185,7 +205,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // JSON文字列をパース（安全な処理）
+    // JSON文字列をパース
     try {
       const parsedSession = {
         currentQuestionIndex: session.currentQuestionIndex || 0,
@@ -199,7 +219,6 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         updatedAt: session.updatedAt || new Date().toISOString()
       };
 
-      // ✅ データ整合性チェック
       console.log('✅ [Load] セッション復元成功:', {
         userId,
         currentQuestionIndex: parsedSession.currentQuestionIndex,
@@ -263,13 +282,13 @@ router.get('/info', checkAuth, async (req: Request, res: Response) => {
     res.json({
       success: true,
       data: {
-        sessionId: session.id,
+        id: session.id,
         userId: session.user_id,
         currentQuestionIndex: session.current_question_index,
         eventTitle: session.event_title,
         eventYear: session.event_year,
         eventMonth: session.event_month,
-        timestamp: new Date(session.timestamp).toISOString(),
+        timestamp: session.timestamp,
         createdAt: session.created_at,
         updatedAt: session.updated_at,
         age: Math.floor((Date.now() - new Date(session.timestamp).getTime()) / 1000) + 's'
@@ -313,18 +332,16 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
 });
 
 // ============================================
-// ✅ 【重要】POST /api/interview/save-all - 全データ一括保存
+// ✅ POST /api/interview/save-all - 全データ一括保存
 // ============================================
-// CorrectionPageV2 からの統合エンドポイント
-// 回答 + 出来事 + 修正テキスト + 写真を一括で保存
 router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const {
-      answers,           // Answer[] - 修正済みの回答
-      event_info,       // EventInfo - 出来事情報
-      corrected_text,   // string - AI修正済みテキスト
-      photo_paths,      // string[] - アップロード済み写真パス
+      answers,
+      event_info,
+      corrected_text,
+      photo_paths,
       timestamp
     } = req.body;
 
@@ -333,7 +350,6 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'user_id is required' });
     }
 
-    // タイムスタンプの有効性を確認
     const validTimestamp = typeof timestamp === 'number' && timestamp > 0 ? timestamp : Date.now();
 
     console.log('💾 [save-all] 全データ一括保存開始:', {
@@ -346,9 +362,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       timestamp: new Date(validTimestamp).toISOString()
     });
 
-    // ============================================
     // ステップ1：ユーザーの生年情報を取得
-    // ============================================
     const userRecord = await queryRow(
       'SELECT birth_year FROM users WHERE id = ?',
       [userId]
@@ -362,7 +376,6 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     let eventYear: number | null = null;
     let eventAge: number | null = null;
 
-    // event_info から年齢 or 西暦年を計算
     if (event_info?.year) {
       eventYear = event_info.year;
       
@@ -376,9 +389,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       }
     }
 
-    // ============================================
     // ステップ2：修正テキストから出来事説明を生成
-    // ============================================
     const eventDescription = corrected_text || 
       `${event_info?.title || '（タイトル未設定）'}についての出来事`;
 
@@ -387,9 +398,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       hasEditedContent: !!corrected_text
     });
 
-    // ============================================
     // ステップ3：timeline テーブルに保存
-    // ============================================
     const timelineResult = await queryRun(
       `INSERT INTO timeline (
         user_id,
@@ -404,23 +413,36 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         is_auto_generated,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         userId,
-        eventAge || null,           // age
-        eventYear || null,          // year
-        event_info?.month || null,  // month
-        event_info?.title || '（タイトル未設定）',  // event_title
-        eventDescription || null,   // event_description
-        corrected_text || null,     // edited_content（修正済みテキスト）
-        corrected_text || null,     // ai_corrected_text
-        'interview',                // stage
-        false                       // is_auto_generated（ユーザー手動編集）
+        eventAge || null,
+        eventYear || null,
+        event_info?.month || null,
+        event_info?.title || '（タイトル未設定）',
+        eventDescription || null,
+        corrected_text || null,
+        corrected_text || null,
+        'interview',
+        false
       ]
     ) as any;
 
-    const timelineId = timelineResult[0]?.id;
+    // timeline ID を取得（SQLiteとPostgresの互換性確保）
+    let timelineId: number | null = null;
+    
+    if (Array.isArray(timelineResult) && timelineResult.length > 0) {
+      timelineId = timelineResult[0]?.id;
+    }
+    
+    if (!timelineId) {
+      // ID を別途取得
+      const lastTimeline = await queryRow(
+        'SELECT id FROM timeline WHERE user_id = ? ORDER BY id DESC LIMIT 1',
+        [userId]
+      ) as any;
+      timelineId = lastTimeline?.id;
+    }
     
     if (!timelineId) {
       throw new Error('Failed to create timeline entry');
@@ -432,9 +454,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       eventYear
     });
 
-    // ============================================
     // ステップ4：写真を timeline_photos に紐付ける
-    // ============================================
     let linkedPhotoCount = 0;
 
     if (photo_paths && Array.isArray(photo_paths) && photo_paths.length > 0) {
@@ -471,11 +491,8 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       });
     }
 
-    // ============================================
     // ステップ5：interview_sessions も更新
-    // ============================================
     try {
-      // answersWithPhotos 形式に変換
       const answersWithPhotos = answers?.map((a: any, idx: number) => ({
         question: a.question,
         answer: a.answer,
@@ -504,9 +521,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       console.warn('⚠️ Interview session 更新に失敗（無視）:', sessionError.message);
     }
 
-    // ============================================
     // ステップ6：レスポンス返却
-    // ============================================
     console.log('✅ save-all 完了！');
 
     res.status(201).json({
@@ -528,7 +543,8 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     console.error('❌ save-all エラー:', error);
     res.status(500).json({
       error: 'Failed to save data',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: error instanceof Error ? error.message : 'Unknown error',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
