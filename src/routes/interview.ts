@@ -125,8 +125,8 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       
       await queryRun(
         `INSERT INTO interview_sessions 
-        (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           currentQuestionIndex,
