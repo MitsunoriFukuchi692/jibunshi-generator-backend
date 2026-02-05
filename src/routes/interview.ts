@@ -55,11 +55,16 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'user_id is required' });
     }
 
+    // ✅ currentQuestionIndex が undefined の場合は 0 をデフォルト値として使う
+    const safeCurrentQuestionIndex = typeof currentQuestionIndex === 'number' && currentQuestionIndex >= 0 
+      ? currentQuestionIndex 
+      : 0;
+
     const validTimestamp = typeof timestamp === 'number' && timestamp > 0 ? timestamp : Date.now();
 
     console.log('💾 [Save] セッション保存開始:', {
       userId,
-      currentQuestionIndex,
+      currentQuestionIndex: safeCurrentQuestionIndex,
       answersCount: answersWithPhotos?.length || 0,
       eventTitle,
       timestamp: new Date(validTimestamp).toISOString()
@@ -108,7 +113,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
           updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?`,
         [
-          currentQuestionIndex,
+          safeCurrentQuestionIndex,
           conversationJson,
           answersJson,
           eventTitle || null,
@@ -129,7 +134,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
-          currentQuestionIndex,
+          safeCurrentQuestionIndex,
           conversationJson,
           answersJson,
           eventTitle || null,
@@ -143,7 +148,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
 
     console.log('✅ [Save] セッション保存完了:', {
       userId,
-      currentQuestionIndex,
+      currentQuestionIndex: safeCurrentQuestionIndex,
       answersCount: answersWithPhotos?.length || 0,
       eventTitle,
       timestamp: new Date(validTimestamp).toISOString()
@@ -154,7 +159,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       message: 'Session saved successfully',
       data: {
         user_id: userId,
-        currentQuestionIndex,
+        currentQuestionIndex: safeCurrentQuestionIndex,
         answersCount: answersWithPhotos?.length || 0,
         eventTitle,
         savedAt: new Date().toISOString()
