@@ -338,10 +338,21 @@ router.put('/:id', authenticate, async (req: Request, res: Response) => {
 
     console.log('✅ Timeline updated - id:', id);
 
+    // ✅ 追加：biography にも更新内容を保存
+    if (edited_content) {
+      await queryRun(`
+        INSERT INTO biography (user_id, edited_content, ai_summary, updated_at)
+        VALUES (?, ?, ?, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET edited_content = ?, ai_summary = ?, updated_at = NOW()
+      `, [user.userId, edited_content, edited_content, edited_content, edited_content]);
+      console.log('✅ Biography updated - user_id:', user.userId);
+    }
+
     // 更新されたデータを取得して返す
     const updatedTimeline = await queryRow('SELECT * FROM timeline WHERE id = ?', [id]);
 
-    res.json({
+
+      res.json({
       success: true,
       message: 'Timeline updated successfully',
       data: updatedTimeline
