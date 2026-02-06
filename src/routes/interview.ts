@@ -429,7 +429,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         corrected_text || null,
         corrected_text || null,
         'interview',
-        false
+        0
       ]
     ) as any;
 
