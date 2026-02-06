@@ -526,10 +526,25 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       console.warn('⚠️ Interview session 更新に失敗（無視）:', sessionError.message);
     }
 
-    // ステップ6：レスポンス返却
-    console.log('✅ save-all 完了！');
+    // ✅ ステップ6：biography テーブルにも保存
+    if (corrected_text && corrected_text.trim()) {
+      try {
+        await queryRun(`
+          INSERT INTO biography (user_id, edited_content, ai_summary, updated_at)
+          VALUES (?, ?, ?, NOW())
+          ON CONFLICT (user_id) DO UPDATE SET edited_content = ?, ai_summary = ?, updated_at = NOW()
+        `, [userId, corrected_text, corrected_text, corrected_text, corrected_text]);
+        
+        console.log('✅ Biography saved - user_id:', userId, 'length:', corrected_text.length);
+      } catch (bioError: any) {
+        console.warn('⚠️ Biography 保存に失敗（無視）:', bioError.message);
+      }
+    }
 
-    res.status(201).json({
+    // ステップ7：レスポンス返却
+    console.log('✅ save-all 完了！');
+    
+      res.status(201).json({
       success: true,
       message: '全データが保存されました',
       data: {
