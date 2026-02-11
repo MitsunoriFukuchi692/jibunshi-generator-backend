@@ -189,6 +189,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
 
     console.log('📖 [Load] セッション復元開始:', { userId });
 
+    // ✅ 修正：最新の更新時刻のレコードを取得（複数レコード対策）
     const session = await queryRow(
       `SELECT 
         current_question_index as currentQuestionIndex,
@@ -201,7 +202,9 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         timestamp,
         updated_at as updatedAt
       FROM interview_sessions
-      WHERE user_id = ?`,
+      WHERE user_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1`,
       [userId]
     ) as any;
 
