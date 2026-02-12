@@ -572,4 +572,35 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
   }
 });
 
+// ============================================
+// 🔍 DEBUG エンドポイント - interview_sessions 診断
+// ============================================
+router.get('/debug/check-sessions', async (req: Request, res: Response) => {
+  try {
+    // ユーザーごとのレコード数
+    const userCounts = await queryAll(
+      `SELECT user_id, COUNT(*) as count FROM interview_sessions GROUP BY user_id ORDER BY user_id`
+    ) as any[];
+
+    // 最新20件のレコード
+    const recentSessions = await queryAll(
+      `SELECT id, user_id, current_question_index, event_title, created_at, updated_at 
+       FROM interview_sessions 
+       ORDER BY updated_at DESC LIMIT 20`
+    ) as any[];
+
+    res.json({
+      message: 'Interview Sessions Diagnostic Info',
+      userRecordCounts: userCounts,
+      recentSessions: recentSessions,
+      totalRecords: userCounts.reduce((sum, u) => sum + parseInt(u.count), 0)
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Debug endpoint error',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export default router;
