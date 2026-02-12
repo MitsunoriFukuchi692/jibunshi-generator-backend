@@ -215,16 +215,31 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
 
     // JSON文字列をパース
     try {
+      // ✅ SQLite の AS マッピング対応（カメルケース or スネークケース）
+      const currentQuestionIndexValue = session.currentQuestionIndex ?? session.current_question_index ?? 0;
+      const answersWithPhotosValue = session.answersWithPhotos ?? session.answers_with_photos;
+      const eventTitleValue = session.eventTitle ?? session.event_title;
+      const eventYearValue = session.eventYear ?? session.event_year;
+      const eventMonthValue = session.eventMonth ?? session.event_month;
+      const eventDescriptionValue = session.eventDescription ?? session.event_description;
+      const updatedAtValue = session.updatedAt ?? session.updated_at;
+
+      console.log('🔍 [DEBUG] Raw session from DB:', {
+        currentQuestionIndex: session.currentQuestionIndex,
+        current_question_index: session.current_question_index,
+        resolved: currentQuestionIndexValue
+      });
+
       const parsedSession = {
-        currentQuestionIndex: session.currentQuestionIndex || 0,
+        currentQuestionIndex: currentQuestionIndexValue,
         conversation: session.conversation ? JSON.parse(session.conversation) : [],
-        answersWithPhotos: session.answersWithPhotos ? JSON.parse(session.answersWithPhotos) : [],
-        eventTitle: session.eventTitle || null,
-        eventYear: session.eventYear || null,
-        eventMonth: session.eventMonth || null,
-        eventDescription: session.eventDescription || null,
+        answersWithPhotos: answersWithPhotosValue ? JSON.parse(answersWithPhotosValue) : [],
+        eventTitle: eventTitleValue || null,
+        eventYear: eventYearValue || null,
+        eventMonth: eventMonthValue || null,
+        eventDescription: eventDescriptionValue || null,
         timestamp: session.timestamp || Date.now(),
-        updatedAt: session.updatedAt || new Date().toISOString()
+        updatedAt: updatedAtValue || new Date().toISOString()
       };
 
       console.log('✅ [Load] セッション復元成功:', {
