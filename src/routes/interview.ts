@@ -70,9 +70,9 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       timestamp: new Date(validTimestamp).toISOString()
     });
 
-    // ✅ 既存データを取得
+    // ✅ 既存データを取得（index後退チェック用に追加フィールド取得）
     const existing = await queryRow(
-      'SELECT timestamp FROM interview_sessions WHERE user_id = ?',
+      'SELECT timestamp, current_question_index, answers_with_photos FROM interview_sessions WHERE user_id = ?',
       [userId]
     ) as any;
 
@@ -88,6 +88,35 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
         message: 'Data is older than existing - skipped',
         reason: 'timestamp_conflict'
       });
+    }
+
+    // ✅ currentQuestionIndex の後退チェック（ログイン時の誤保存を防ぐ）
+    if (existing) {
+      const existingIndex = typeof existing.current_question_index === 'number'
+        ? existing.current_question_index : 0;
+      
+      const existingAnswers = (() => {
+        try { return JSON.parse(existing.answers_with_photos || '[]'); }
+        catch { return []; }
+      })();
+      const newAnswersCount = (answersWithPhotos || []).length;
+
+      if (safeCurrentQuestionIndex < existingIndex && newAnswersCount <= existingAnswers.length) {
+        console.log('⚠️ [Save] currentQuestionIndex が後退しているためスキップ:', {
+          userId,
+          existingIndex,
+          newIndex: safeCurrentQuestionIndex,
+          existingAnswers: existingAnswers.length,
+          newAnswers: newAnswersCount
+        });
+        return res.json({
+          success: false,
+          message: 'Index regression detected - skipped',
+          reason: 'index_regression',
+          existingIndex,
+          newIndex: safeCurrentQuestionIndex
+        });
+      }
     }
 
     // ✅ JSON化
