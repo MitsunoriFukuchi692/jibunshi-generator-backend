@@ -54,50 +54,34 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // ✅ 修正：editedContent を最優先使用
-    // フロントから送られた editedContent（修正テキスト）を優先使用
+    // ✅ 修正①：biography取得の優先順位を改善
+    // 優先順位: 1) biography DB → 2) editedContent(フロント) → 3) Q&A形式(最終手段)
     let biographyContent = '';
-    
-    // ✅ 優先順位：1) editedContent（修正テキスト） > 2) biography table > 3) answersWithPhotos
-    if (editedContent && editedContent.trim().length > 0) {
-      // ✅ 修正テキストを使用（最優先）
+
+    // まず biography DB から取得（最も信頼性が高い）
+    const biography = await queryRow(`
+      SELECT id, edited_content 
+      FROM biography 
+      WHERE user_id = ?
+    `, [userId]);
+
+    if (biography && biography.edited_content && biography.edited_content.trim().length > 0) {
+      biographyContent = biography.edited_content;
+      console.log('✅ Using biography DB (最優先) - length:', biographyContent.length);
+    } else if (editedContent && editedContent.trim().length > 0) {
+      // biography DBにない場合はフロントの editedContent を使用
       biographyContent = editedContent;
-      console.log('✅ Using editedContent from frontend (修正テキスト) - length:', biographyContent.length);
+      console.log('✅ Using editedContent from frontend - length:', biographyContent.length);
     } else if (answersWithPhotos && answersWithPhotos.length > 0) {
-      // フォールバック：biography テーブルから取得を試みる
-      const biography = await queryRow(`
-        SELECT id, edited_content 
-        FROM biography 
-        WHERE user_id = ?
-      `, [userId]);
-
-      if (biography && biography.edited_content && biography.edited_content.trim().length > 0) {
-        biographyContent = biography.edited_content;
-        console.log('✅ Using biography table (修正済みテキスト) - length:', biographyContent.length);
-      } else {
-        // 最後の手段：answersWithPhotos を使用
-        biographyContent = answersWithPhotos
-          .map((answer: any) => answer.text || '')
-          .filter((text: string) => text.trim())
-          .join('\n\n');
-        
-        console.log('⚠️ Fallback to answersWithPhotos from frontend - length:', biographyContent.length);
-      }
+      // 最終手段：Q&A形式（本来ここには来ないはず）
+      biographyContent = answersWithPhotos
+        .map((answer: any) => answer.text || '')
+        .filter((text: string) => text.trim())
+        .join('\n\n');
+      console.log('⚠️ Fallback to raw answers (biography未生成) - length:', biographyContent.length);
     } else {
-      // biography テーブルから取得
-      const biography = await queryRow(`
-        SELECT id, edited_content 
-        FROM biography 
-        WHERE user_id = ?
-      `, [userId]);
-
-      if (biography && biography.edited_content) {
-        biographyContent = biography.edited_content;
-        console.log('✅ Using biography table - length:', biographyContent.length);
-      } else {
-        console.warn('⚠️ No biography content available');
-        return res.status(400).json({ error: 'No biography content available' });
-      }
+      console.warn('⚠️ No biography content available');
+      return res.status(400).json({ error: 'No biography content available' });
     }
 
     // ✅ content が null でない、かつ UTF-8 文字列であることを確認
@@ -108,19 +92,37 @@ router.post('/generate', authenticate, async (req: Request, res: Response) => {
 
     console.log('📖 Biography content - length:', biographyContent.length, 'first 100 chars:', biographyContent.substring(0, 100));
 
-    // ✅ 修正: timeline_photos から写真を取得（biography_photos ではなく）
+    // ✅ 修正②：DB写真 + answersWithPhotos のbase64写真を両方取得
     console.log('📸 Fetching timeline photos for user:', userId);
-    const photos = await queryAll(`
+    const dbPhotos = await queryAll(`
       SELECT file_path, description
       FROM timeline_photos
       WHERE timeline_id IN (
-        SELECT id FROM timeline WHERE user_id = ? AND is_auto_generated = 1
+        SELECT id FROM timeline WHERE user_id = ?
       )
       ORDER BY display_order ASC
       LIMIT 20
     `, [userId]);
 
-    console.log('🖼️ Photos found:', photos.length);
+    // answersWithPhotos に含まれるbase64写真も抽出
+    const base64Photos: any[] = [];
+    if (answersWithPhotos && Array.isArray(answersWithPhotos)) {
+      answersWithPhotos.forEach((answer: any) => {
+        if (answer.photos && Array.isArray(answer.photos)) {
+          answer.photos.forEach((photo: any) => {
+            if (photo.file_path && photo.file_path.startsWith('data:')) {
+              base64Photos.push({
+                file_path: photo.file_path,
+                description: photo.description || ''
+              });
+            }
+          });
+        }
+      });
+    }
+
+    const photos = [...dbPhotos, ...base64Photos];
+    console.log('🖼️ Photos found - DB:', dbPhotos.length, 'Base64:', base64Photos.length, 'Total:', photos.length);
 
     // ✅ 修正：フロントから送られた timelines を優先使用
     // フォールバック：requestTimelines がない場合はデータベースから取得
@@ -383,6 +385,31 @@ async function generatePDF(
             });
           }
         });
+      }
+
+      // ============================================
+      // 重要事項一覧ページ（人生年表の前）
+      // ============================================
+      if (importantEvents && importantEvents.length > 0) {
+        doc.addPage();
+        doc.fontSize(16).font(titleFont).fillColor('#2c3e50').text('⭐ 重要事項一覧', { underline: true });
+        doc.moveDown(1);
+
+        importantEvents.forEach((event: any, idx: number) => {
+          const yearText = event.year ? `${event.year}年` : '';
+          const monthText = event.month ? `${event.month}月` : '';
+          const eventTitle = event.eventTitle || event.event_title || 'できごと';
+          const dateStr = [yearText, monthText].filter(Boolean).join('');
+
+          doc.fontSize(11).font(titleFont).fillColor('#2c3e50');
+          doc.text(`${idx + 1}. ${dateStr ? `【${dateStr}】` : ''}${eventTitle}`, {
+            continued: false,
+            indent: 10,
+            lineGap: 4
+          });
+          doc.moveDown(0.3);
+        });
+        doc.moveDown(1);
       }
 
       // ============================================
