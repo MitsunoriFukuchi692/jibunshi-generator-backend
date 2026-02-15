@@ -554,11 +554,14 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       await queryRun(
         `UPDATE interview_sessions
         SET 
+          current_question_index = 0,
+          conversation = ?,
           answers_with_photos = ?,
           timestamp = ?,
           updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?`,
         [
+          JSON.stringify([]),
           JSON.stringify(answersWithPhotos),
           validTimestamp,
           userId
