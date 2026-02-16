@@ -39,10 +39,10 @@ const checkAuth = (req: Request, res: Response, next: Function) => {
 router.post('/save', checkAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
-    const { 
-      currentQuestionIndex, 
-      conversation, 
-      answersWithPhotos, 
+    const {
+      currentQuestionIndex,
+      conversation,
+      answersWithPhotos,
       timestamp,
       eventTitle,
       eventYear,
@@ -56,8 +56,8 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     }
 
     // ✅ currentQuestionIndex が undefined の場合は 0 をデフォルト値として使う
-    const safeCurrentQuestionIndex = typeof currentQuestionIndex === 'number' && currentQuestionIndex >= 0 
-      ? currentQuestionIndex 
+    const safeCurrentQuestionIndex = typeof currentQuestionIndex === 'number' && currentQuestionIndex >= 0
+      ? currentQuestionIndex
       : 0;
 
     const validTimestamp = typeof timestamp === 'number' && timestamp > 0 ? timestamp : Date.now();
@@ -90,36 +90,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
       });
     }
 
-    // ✅ currentQuestionIndex の後退チェック（ログイン時の誤保存を防ぐ）
-   // if (existing) {
-     // const existingIndex = typeof existing.current_question_index === 'number'
-      //  ? existing.current_question_index : 0;
-      
-      const existingAnswers = (() => {
-        try { return JSON.parse(existing.answers_with_photos || '[]'); }
-        catch { return []; }
-      })();
-      const newAnswersCount = (answersWithPhotos || []).length;
-
-      if (safeCurrentQuestionIndex < existingIndex && newAnswersCount <= existingAnswers.length) {
-        console.log('⚠️ [Save] currentQuestionIndex が後退しているためスキップ:', {
-          userId,
-          existingIndex,
-          newIndex: safeCurrentQuestionIndex,
-          existingAnswers: existingAnswers.length,
-          newAnswers: newAnswersCount
-        });
-        return res.json({
-          success: false,
-          message: 'Index regression detected - skipped',
-          reason: 'index_regression',
-          existingIndex,
-          newIndex: safeCurrentQuestionIndex
-        });
-      }
-    }
-
-    // ✅ JSON化
+        // ✅ JSON化
     const conversationJson = JSON.stringify(conversation || []);
     const answersJson = JSON.stringify(answersWithPhotos || []);
 
@@ -127,7 +98,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     if (existing) {
       // UPDATE パターン（既存データがある場合）
       console.log('🔄 [Save] 既存データを更新:', { userId });
-      
+
       await queryRun(
         `UPDATE interview_sessions
         SET 
@@ -156,7 +127,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     } else {
       // INSERT パターン（新規データの場合）
       console.log('✨ [Save] 新規セッションを作成:', { userId });
-      
+
       await queryRun(
         `INSERT INTO interview_sessions 
         (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp)
@@ -372,9 +343,9 @@ router.delete('/', checkAuth, async (req: Request, res: Response) => {
     );
 
     console.log('✅ セッション削除完了');
-    res.json({ 
-      success: true, 
-      message: 'Interview session deleted' 
+    res.json({
+      success: true,
+      message: 'Interview session deleted'
     });
   } catch (error) {
     console.error('❌ [Error] セッション削除エラー:', error);
@@ -421,7 +392,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       'SELECT birth_year FROM users WHERE id = ?',
       [userId]
     ) as any;
-    
+
     if (!userRecord) {
       console.error('❌ ユーザーが見つかりません:', userId);
       return res.status(400).json({ error: 'User not found' });
@@ -432,7 +403,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
 
     if (event_info?.year) {
       eventYear = event_info.year;
-      
+
       if (eventYear && userRecord.birth_year) {
         eventAge = eventYear - userRecord.birth_year;
         console.log('✅ Event年を指定:', {
@@ -444,7 +415,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     }
 
     // ステップ2：修正テキストから出来事説明を生成
-    const eventDescription = corrected_text || 
+    const eventDescription = corrected_text ||
       `${event_info?.title || '（タイトル未設定）'}についての出来事`;
 
     console.log('📝 出来事説明を生成:', {
@@ -484,11 +455,11 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
 
     // timeline ID を取得（SQLiteとPostgresの互換性確保）
     let timelineId: number | null = null;
-    
+
     if (Array.isArray(timelineResult) && timelineResult.length > 0) {
       timelineId = timelineResult[0]?.id;
     }
-    
+
     if (!timelineId) {
       // ID を別途取得
       const lastTimeline = await queryRow(
@@ -497,7 +468,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       ) as any;
       timelineId = lastTimeline?.id;
     }
-    
+
     if (!timelineId) {
       throw new Error('Failed to create timeline entry');
     }
@@ -514,7 +485,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     if (photo_paths && Array.isArray(photo_paths) && photo_paths.length > 0) {
       for (let idx = 0; idx < photo_paths.length; idx++) {
         const photoPath = photo_paths[idx];
-        
+
         console.log('📸 写真を紐付け中:', {
           timelineId,
           photoPath,
@@ -586,7 +557,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
           VALUES (?, ?, ?, NOW())
           ON CONFLICT (user_id) DO UPDATE SET edited_content = ?, ai_summary = ?, updated_at = NOW()
         `, [userId, corrected_text, corrected_text, corrected_text, corrected_text]);
-        
+
         console.log('✅ Biography saved - user_id:', userId, 'length:', corrected_text.length);
       } catch (bioError: any) {
         console.warn('⚠️ Biography 保存に失敗（無視）:', bioError.message);
@@ -595,8 +566,8 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
 
     // ステップ7：レスポンス返却
     console.log('✅ save-all 完了！');
-    
-      res.status(201).json({
+
+    res.status(201).json({
       success: true,
       message: '全データが保存されました',
       data: {
