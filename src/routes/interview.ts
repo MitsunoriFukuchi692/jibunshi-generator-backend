@@ -91,9 +91,9 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     }
 
     // ✅ currentQuestionIndex の後退チェック（ログイン時の誤保存を防ぐ）
-    if (existing) {
-      const existingIndex = typeof existing.current_question_index === 'number'
-        ? existing.current_question_index : 0;
+   // if (existing) {
+     // const existingIndex = typeof existing.current_question_index === 'number'
+      //  ? existing.current_question_index : 0;
       
       const existingAnswers = (() => {
         try { return JSON.parse(existing.answers_with_photos || '[]'); }
