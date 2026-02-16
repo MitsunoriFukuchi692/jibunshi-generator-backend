@@ -8,21 +8,6 @@ import { verifyToken, extractToken } from '../utils/auth.js';
 
 const router = Router();
 
-// ============================================
-// ✅ Quarter判定関数（現在の年と四半期を取得）
-// ============================================
-function getCurrentQuarter(): { year: number; quarter: number } {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1; // 1-12
-  const quarter = Math.ceil(month / 3); // 1-4
-  return { year, quarter };
-}
-
-function getQuarterString(year: number, quarter: number): string {
-  return `${year}-Q${quarter}`;
-}
-
 // ✅ 認証チェック
 const checkAuth = (req: Request, res: Response, next: Function) => {
   const authHeader = req.headers.authorization;
@@ -77,16 +62,11 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
 
     const validTimestamp = typeof timestamp === 'number' && timestamp > 0 ? timestamp : Date.now();
 
-    // ✅ 現在の Quarter を取得
-    const { year: currentYear, quarter: currentQuarter } = getCurrentQuarter();
-    const quarterString = getQuarterString(currentYear, currentQuarter);
-
     console.log('💾 [Save] セッション保存開始:', {
       userId,
       currentQuestionIndex: safeCurrentQuestionIndex,
       answersCount: answersWithPhotos?.length || 0,
       eventTitle,
-      quarter: quarterString,
       timestamp: new Date(validTimestamp).toISOString()
     });
 
@@ -146,7 +126,7 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
     // ✅ SQLite/PostgreSQL 互換性：既存データがあるか確認
     if (existing) {
       // UPDATE パターン（既存データがある場合）
-      console.log('🔄 [Save] 既存データを更新:', { userId, quarter: quarterString });
+      console.log('🔄 [Save] 既存データを更新:', { userId });
       
       await queryRun(
         `UPDATE interview_sessions
@@ -158,7 +138,6 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
           event_year = ?,
           event_month = ?,
           event_description = ?,
-          quarter = ?,
           timestamp = ?,
           updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?`,
@@ -170,19 +149,18 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
           eventYear || null,
           eventMonth || null,
           eventDescription || null,
-          quarterString,
           validTimestamp,
           userId
         ]
       );
     } else {
       // INSERT パターン（新規データの場合）
-      console.log('✨ [Save] 新規セッションを作成:', { userId, quarter: quarterString });
+      console.log('✨ [Save] 新規セッションを作成:', { userId });
       
       await queryRun(
         `INSERT INTO interview_sessions 
-        (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, quarter, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (user_id, current_question_index, conversation, answers_with_photos, event_title, event_year, event_month, event_description, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           safeCurrentQuestionIndex,
@@ -192,7 +170,6 @@ router.post('/save', checkAuth, async (req: Request, res: Response) => {
           eventYear || null,
           eventMonth || null,
           eventDescription || null,
-          quarterString,
           validTimestamp
         ]
       );
@@ -251,6 +228,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         event_year as eventYear,
         event_month as eventMonth,
         event_description as eventDescription,
+        quarter,
         timestamp,
         updated_at as updatedAt
       FROM interview_sessions
@@ -464,18 +442,13 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
       }
     }
 
-    // ✅ 現在の Quarter を取得
-    const { year: currentYear, quarter: currentQuarter } = getCurrentQuarter();
-    const quarterString = getQuarterString(currentYear, currentQuarter);
-
     // ステップ2：修正テキストから出来事説明を生成
     const eventDescription = corrected_text || 
       `${event_info?.title || '（タイトル未設定）'}についての出来事`;
 
     console.log('📝 出来事説明を生成:', {
       length: eventDescription.length,
-      hasEditedContent: !!corrected_text,
-      quarter: quarterString
+      hasEditedContent: !!corrected_text
     });
 
     // ステップ3：timeline テーブルに保存
@@ -491,10 +464,9 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         ai_corrected_text,
         stage,
         is_auto_generated,
-        quarter,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         userId,
         eventAge || null,
@@ -505,8 +477,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         corrected_text || null,
         corrected_text || null,
         'interview',
-        0,
-        quarterString
+        0
       ]
     ) as any;
 
@@ -533,8 +504,7 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
     console.log('✅ Timeline 保存完了:', {
       timelineId,
       eventTitle: event_info?.title,
-      eventYear,
-      quarter: quarterString
+      eventYear
     });
 
     // ステップ4：写真を timeline_photos に紐付ける
@@ -633,7 +603,6 @@ router.post('/save-all', checkAuth, async (req: Request, res: Response) => {
         userId,
         eventTitle: event_info?.title,
         eventYear,
-        quarter: quarterString,
         answersCount: answers?.length || 0,
         photoCount: linkedPhotoCount,
         correctedTextLength: corrected_text?.length || 0,
