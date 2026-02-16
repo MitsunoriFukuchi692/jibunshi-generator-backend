@@ -28,6 +28,10 @@ export async function initDb(): Promise<void> {
     try {
       await createTablesPostgres(pool);
       console.log('✅ PostgreSQL database initialized');
+      
+      // Quarter マイグレーション実行
+      await runQuarterMigrationPostgres(pool);
+      console.log('✅ Quarter migration completed');
     } catch (error) {
       console.error('❌ Failed to initialize PostgreSQL:', error);
       throw error;
@@ -50,6 +54,10 @@ export async function initDb(): Promise<void> {
     try {
       createTablesSqlite(sqlite);
       console.log('✅ SQLite database initialized');
+      
+      // Quarter マイグレーション実行
+      runQuarterMigrationSqlite(sqlite);
+      console.log('✅ Quarter migration completed');
     } catch (error) {
       console.error('❌ Failed to initialize SQLite:', error);
       throw error;
@@ -450,3 +458,98 @@ export async function queryRun(sql: string, params: any[] = []): Promise<any> {
     return stmt.run(params);
   }
 }
+
+// ============================================
+// ✅ Quarter マイグレーション関数
+// ============================================
+
+function runQuarterMigrationSqlite(db: any): void {
+  try {
+    // interview_sessions に quarter カラムを追加
+    db.exec(`
+      ALTER TABLE interview_sessions ADD COLUMN quarter TEXT DEFAULT '2026-Q1' NOT NULL;
+    `);
+    console.log('✅ Added quarter column to interview_sessions (SQLite)');
+  } catch (error: any) {
+    if (error.message.includes('duplicate column')) {
+      console.log('ℹ️ quarter column already exists in interview_sessions (SQLite)');
+    } else {
+      console.warn('⚠️ Failed to add quarter to interview_sessions:', error.message);
+    }
+  }
+
+  try {
+    // timeline に quarter カラムを追加
+    db.exec(`
+      ALTER TABLE timeline ADD COLUMN quarter TEXT DEFAULT '2026-Q1' NOT NULL;
+    `);
+    console.log('✅ Added quarter column to timeline (SQLite)');
+  } catch (error: any) {
+    if (error.message.includes('duplicate column')) {
+      console.log('ℹ️ quarter column already exists in timeline (SQLite)');
+    } else {
+      console.warn('⚠️ Failed to add quarter to timeline:', error.message);
+    }
+  }
+
+  try {
+    // インデックスを追加
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_interview_sessions_userId_quarter 
+        ON interview_sessions(user_id, quarter);
+      CREATE INDEX IF NOT EXISTS idx_timeline_userId_quarter 
+        ON timeline(user_id, quarter);
+    `);
+    console.log('✅ Added quarter indexes (SQLite)');
+  } catch (error: any) {
+    console.warn('⚠️ Failed to add quarter indexes:', error.message);
+  }
+}
+
+async function runQuarterMigrationPostgres(pool: Pool): Promise<void> {
+  try {
+    // interview_sessions に quarter カラムを追加
+    await pool.query(`
+      ALTER TABLE interview_sessions 
+      ADD COLUMN IF NOT EXISTS quarter TEXT DEFAULT '2026-Q1' NOT NULL;
+    `);
+    console.log('✅ Added quarter column to interview_sessions (PostgreSQL)');
+  } catch (error: any) {
+    if (error.message.includes('already exists')) {
+      console.log('ℹ️ quarter column already exists in interview_sessions (PostgreSQL)');
+    } else {
+      console.warn('⚠️ Failed to add quarter to interview_sessions:', error.message);
+    }
+  }
+
+  try {
+    // timeline に quarter カラムを追加
+    await pool.query(`
+      ALTER TABLE timeline 
+      ADD COLUMN IF NOT EXISTS quarter TEXT DEFAULT '2026-Q1' NOT NULL;
+    `);
+    console.log('✅ Added quarter column to timeline (PostgreSQL)');
+  } catch (error: any) {
+    if (error.message.includes('already exists')) {
+      console.log('ℹ️ quarter column already exists in timeline (PostgreSQL)');
+    } else {
+      console.warn('⚠️ Failed to add quarter to timeline:', error.message);
+    }
+  }
+
+  try {
+    // インデックスを追加
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_interview_sessions_userId_quarter 
+        ON interview_sessions(user_id, quarter);
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_timeline_userId_quarter 
+        ON timeline(user_id, quarter);
+    `);
+    console.log('✅ Added quarter indexes (PostgreSQL)');
+  } catch (error: any) {
+    console.warn('⚠️ Failed to add quarter indexes:', error.message);
+  }
+}
+
