@@ -268,6 +268,7 @@ router.get('/load', checkAuth, async (req: Request, res: Response) => {
         eventYear: eventYearValue || null,
         eventMonth: eventMonthValue || null,
         eventDescription: eventDescriptionValue || null,
+        quarter: session.quarter || '2026-Q1',
         timestamp: session.timestamp || Date.now(),
         updatedAt: updatedAtValue || new Date().toISOString()
       };
